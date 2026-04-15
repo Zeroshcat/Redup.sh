@@ -2,13 +2,24 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { MarkdownEditor } from "@/components/markdown/MarkdownEditor";
 import { createTopic, listCategories, type ServerCategory } from "@/lib/api/forum";
 import { APIError } from "@/lib/api-client";
 import { useAuthStore } from "@/store/auth";
 
+// Suspense boundary is required for any client component that calls
+// useSearchParams() — Next.js static generation bails out otherwise and
+// fails the prod build with a CSR-bailout error on /new.
 export default function NewTopicPage() {
+  return (
+    <Suspense fallback={null}>
+      <NewTopicInner />
+    </Suspense>
+  );
+}
+
+function NewTopicInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const user = useAuthStore((s) => s.user);
