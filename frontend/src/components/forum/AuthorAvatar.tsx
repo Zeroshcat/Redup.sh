@@ -1,0 +1,42 @@
+import type { Author } from "@/types";
+
+export function AuthorAvatar({ author, size = 40 }: { author: Author; size?: number }) {
+  const style = { width: size, height: size };
+
+  if (author.type === "user") {
+    return (
+      <div
+        style={style}
+        className="flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-muted to-muted-foreground/20 font-semibold text-foreground"
+      >
+        {author.user.username[0]?.toUpperCase()}
+      </div>
+    );
+  }
+
+  if (author.type === "anon") {
+    return (
+      <div
+        style={style}
+        className="flex shrink-0 items-center justify-center rounded-full bg-foreground font-mono text-background"
+      >
+        ?
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={style}
+      className="flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-400 to-violet-600 text-white"
+    >
+      ⚡
+    </div>
+  );
+}
+
+export function authorDisplayName(author: Author): string {
+  if (author.type === "user") return author.user.username;
+  if (author.type === "anon") return author.anon.anonId;
+  return author.bot.name;
+}

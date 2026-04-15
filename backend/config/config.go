@@ -1,0 +1,94 @@
+package config
+
+import (
+	"log"
+	"os"
+	"strconv"
+
+	"github.com/joho/godotenv"
+)
+
+type Config struct {
+	Port             string
+	GinMode          string
+	DatabaseURL      string
+	RedisURL         string
+	JWTAccessSecret  string
+	JWTRefreshSecret string
+	JWTAccessTTLMin  int
+	JWTRefreshTTLDay int
+	CORSAllowOrigin  string
+	AnonIDPrefix     string
+	SnowflakeNodeID  int
+
+	BotEnabled       bool
+	BotTimeoutSec    int
+	BotMaxContext    int
+	OpenAIAPIKey     string
+	OpenAIBaseURL    string
+	AnthropicAPIKey  string
+	AnthropicBaseURL string
+
+	SentryDSN         string
+	SentryEnvironment string
+}
+
+func Load() *Config {
+	// Best-effort .env load — don't fail if missing (e.g. prod uses real env).
+	if err := godotenv.Load(); err != nil {
+		log.Println("no .env file found, using process env")
+	}
+
+	return &Config{
+		Port:             envStr("PORT", "8080"),
+		GinMode:          envStr("GIN_MODE", "debug"),
+		DatabaseURL:      envStr("DATABASE_URL", "postgres://redup:redup@localhost:5432/redup?sslmode=disable"),
+		RedisURL:         envStr("REDIS_URL", "redis://localhost:6379/0"),
+		JWTAccessSecret:  envStr("JWT_ACCESS_SECRET", "dev-access-secret"),
+		JWTRefreshSecret: envStr("JWT_REFRESH_SECRET", "dev-refresh-secret"),
+		JWTAccessTTLMin:  envInt("JWT_ACCESS_TTL_MIN", 15),
+		JWTRefreshTTLDay: envInt("JWT_REFRESH_TTL_DAYS", 7),
+		CORSAllowOrigin:  envStr("CORS_ALLOW_ORIGIN", "http://localhost:3000"),
+		AnonIDPrefix:     envStr("ANON_ID_PREFIX", "Anon"),
+		SnowflakeNodeID:  envInt("SNOWFLAKE_NODE_ID", 1),
+
+		BotEnabled:       envBool("BOT_ENABLED", false),
+		BotTimeoutSec:    envInt("BOT_TIMEOUT_SEC", 15),
+		BotMaxContext:    envInt("BOT_MAX_CONTEXT", 20),
+		OpenAIAPIKey:     envStr("OPENAI_API_KEY", ""),
+		OpenAIBaseURL:    envStr("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+		AnthropicAPIKey:  envStr("ANTHROPIC_API_KEY", ""),
+		AnthropicBaseURL: envStr("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1"),
+
+		SentryDSN:         envStr("SENTRY_DSN", ""),
+		SentryEnvironment: envStr("SENTRY_ENVIRONMENT", "development"),
+	}
+}
+
+func envBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		switch v {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off":
+			return false
+		}
+	}
+	return fallback
+}
+
+func envStr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}

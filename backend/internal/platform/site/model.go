@@ -1,0 +1,146 @@
+package site
+
+import (
+	"time"
+
+	"gorm.io/datatypes"
+)
+
+// Setting is a single key/value row. The value is JSONB so each group's
+// schema can evolve independently without migrations.
+type Setting struct {
+	Key       string         `gorm:"primaryKey;size:64" json:"key"`
+	Value     datatypes.JSON `gorm:"type:jsonb" json:"value"`
+	UpdatedAt time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	UpdatedBy int64          `json:"updated_by,omitempty"`
+}
+
+func (Setting) TableName() string { return "site_settings" }
+
+// Group keys — each logical section of the admin UI has its own row.
+const (
+	KeyBasic        = "site.basic"
+	KeyRegistration = "site.registration"
+	KeySEO          = "site.seo"
+	KeyRules        = "site.rules"
+	KeyFooter       = "site.footer"
+	KeyAnon         = "site.anon"
+	KeyCredits      = "site.credits"
+	KeyModeration   = "site.moderation"
+)
+
+// Typed structs for each group. These define the canonical shape persisted
+// under each key. Frontend talks JSON shapes that match these.
+
+type Basic struct {
+	Name         string `json:"name"`
+	Tagline      string `json:"tagline"`
+	Description  string `json:"description"`
+	LogoURL      string `json:"logo_url,omitempty"`
+	ContactEmail string `json:"contact_email,omitempty"`
+	Language     string `json:"language"`
+	Timezone     string `json:"timezone"`
+}
+
+type Registration struct {
+	Mode                  string   `json:"mode"` // open / invite / review / closed
+	EmailVerifyRequired   bool     `json:"email_verify_required"`
+	EmailDomainRestricted bool     `json:"email_domain_restricted"`
+	AllowedEmailDomains   []string `json:"allowed_email_domains,omitempty"`
+	InviteRequired        bool     `json:"invite_required"`
+	UsernameMinLen        int      `json:"username_min_len"`
+	UsernameMaxLen        int      `json:"username_max_len"`
+	ReservedUsernames     []string `json:"reserved_usernames,omitempty"`
+	PasswordMinLen        int      `json:"password_min_len"`
+	PasswordRequireMixed  bool     `json:"password_require_mixed"`
+	AllowAnonEntry        bool     `json:"allow_anon_entry"`
+	MinLevelForAnon       int      `json:"min_level_for_anon"`
+}
+
+type SEO struct {
+	Indexable        bool   `json:"indexable"`
+	Sitemap          bool   `json:"sitemap"`
+	DefaultOGImage   string `json:"default_og_image,omitempty"`
+	GoogleAnalyticsID string `json:"google_analytics_id,omitempty"`
+}
+
+type Rules struct {
+	Content string `json:"content"`
+}
+
+type FooterLink struct {
+	Label string `json:"label"`
+	URL   string `json:"url"`
+}
+
+type Footer struct {
+	Copyright string       `json:"copyright"`
+	ICP       string       `json:"icp,omitempty"`
+	ICPLink   string       `json:"icp_link,omitempty"`
+	PoliceICP string       `json:"police_icp,omitempty"`
+	Links     []FooterLink `json:"links,omitempty"`
+}
+
+type Anon struct {
+	Prefix string `json:"prefix"`
+}
+
+// Reward bundles the XP + credits award for a single triggering action.
+type Reward struct {
+	XP      int `json:"xp"`
+	Credits int `json:"credits"`
+}
+
+// Credits is the platform-wide economy config. All thresholds are admin-tunable
+// from the /admin/site page; reward hooks read this struct on each call so a
+// change takes effect without a restart.
+type Credits struct {
+	SignupBonus      Reward `json:"signup_bonus"`
+	TopicReward      Reward `json:"topic_reward"`
+	PostReward       Reward `json:"post_reward"`
+	LikeXPReward     int    `json:"like_xp_reward"`
+	ViolationPenalty int    `json:"violation_penalty"`
+
+	// Daily caps — the Nth+1 award of a given kind in the same UTC day is
+	// silently dropped (no XP / no credits). 0 means unlimited.
+	DailyTopicCap   int `json:"daily_topic_cap"`
+	DailyPostCap    int `json:"daily_post_cap"`
+	DailyLikeXPCap  int `json:"daily_like_xp_cap"`
+
+	// Quality gate — minimum rune count required to qualify for the topic /
+	// post reward. Below this length the action still succeeds but no XP/
+	// credits are granted.
+	MinTopicLength int `json:"min_topic_length"`
+	MinPostLength  int `json:"min_post_length"`
+
+	// LevelThresholds[i] is the XP needed to be at level i+1. A user with XP
+	// >= LevelThresholds[i] is at least level i+1.
+	LevelThresholds []int `json:"level_thresholds"`
+
+	// Translation feature config — daily free quota, per-call cost beyond it,
+	// and which platform LLM provider / model to dispatch to.
+	DailyFreeTranslations int    `json:"daily_free_translations"`
+	TranslationCost       int    `json:"translation_cost"`
+	TranslationProvider   string `json:"translation_provider"`
+	TranslationModel      string `json:"translation_model"`
+}
+
+// Moderation is the LLM-based content audit config. Reads site.rules at call
+// time as the rule baseline, then asks the model to judge new posts against
+// it. All decisions are recorded to moderation_logs for admin review.
+type Moderation struct {
+	Enabled     bool   `json:"enabled"`
+	Provider    string `json:"provider"`
+	Model       string `json:"model"`
+	BlockAction bool   `json:"block_action"` // when false, "block" verdicts only log (dry-run mode)
+
+	// AutoFlagThreshold is the number of unresolved warn/block verdicts a
+	// user needs to accumulate before an automatic system-report is filed
+	// against them. 0 disables auto-flagging.
+	AutoFlagThreshold int `json:"auto_flag_threshold"`
+
+	// SuggestRewrite controls whether a "block" verdict is accompanied by a
+	// second LLM call that asks for a rule-compliant rewrite. The user sees
+	// the suggestion in the error response and can adopt it or edit freely.
+	SuggestRewrite bool `json:"suggest_rewrite"`
+}

@@ -1,0 +1,49 @@
+# Environment / secrets — never commit
+.env
+.env.*
+!.env.example
+!.env.prod.example
+*.pem
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Local tooling / assistant metadata
+.claude/
+CLAUDE.md
+**/CLAUDE.md
+AGENTS.md
+**/AGENTS.md
+
+# 内部项目参考文档（产品愿景/设计笔记，不公开）
+项目参考README.md
+
+# Backend build artifacts
+backend/bin/
+backend/tmp/
+backend/*.log
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
+frontend/.vercel
+frontend/coverage/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.pnpm-debug.log*
+
+# Docker volumes dumped locally
+postgres_data/
+redis_data/
