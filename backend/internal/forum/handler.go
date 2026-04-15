@@ -55,6 +55,65 @@ func (h *Handler) Register(r *gin.RouterGroup) {
 	authed.POST("/topics/:id/like", h.toggleTopicLike)
 	authed.POST("/topics/:id/bookmark", h.toggleBookmark)
 	authed.POST("/posts/:id/like", h.togglePostLike)
+	authed.PATCH("/topics/:id/body", h.updateTopicBody)
+	authed.PATCH("/posts/:id", h.updatePostContent)
+}
+
+func currentUserRole(c *gin.Context) string {
+	v, ok := c.Get("user_role")
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
+}
+
+type editBodyReq struct {
+	Body string `json:"body" binding:"required"`
+}
+
+func (h *Handler) updateTopicBody(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.BadRequest(c, "invalid id")
+		return
+	}
+	var req editBodyReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.BadRequest(c, "invalid request")
+		return
+	}
+	uid, _ := auth.CurrentUserID(c)
+	t, err := h.svc.UpdateTopicBody(uid, currentUserRole(c), id, req.Body)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	httpx.OK(c, t)
+}
+
+type editContentReq struct {
+	Content string `json:"content" binding:"required"`
+}
+
+func (h *Handler) updatePostContent(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.BadRequest(c, "invalid id")
+		return
+	}
+	var req editContentReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.BadRequest(c, "invalid request")
+		return
+	}
+	uid, _ := auth.CurrentUserID(c)
+	p, err := h.svc.UpdatePost(uid, currentUserRole(c), id, req.Content)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	httpx.OK(c, p)
 }
 
 func (h *Handler) feed(c *gin.Context) {
@@ -116,9 +175,21 @@ func (h *Handler) categoryBySlug(c *gin.Context) {
 }
 
 func (h *Handler) listTopics(c *gin.Context) {
+	limit := atoiOr(c.Query("limit"), 30)
+	if limit < 1 {
+		limit = 30
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := atoiOr(c.Query("offset"), 0)
+	if offset < 0 {
+		offset = 0
+	}
 	opts := TopicListOptions{
-		Sort:  c.DefaultQuery("sort", "hot"),
-		Limit: atoiOr(c.Query("limit"), 30),
+		Sort:   c.DefaultQuery("sort", "hot"),
+		Limit:  limit,
+		Offset: offset,
 	}
 	if slug := c.Query("category"); slug != "" {
 		cat, err := h.svc.CategoryBySlug(slug)
@@ -219,10 +290,11 @@ func (h *Handler) userPosts(c *gin.Context) {
 }
 
 type createTopicReq struct {
-	Category string `json:"category" binding:"required"`
-	Title    string `json:"title" binding:"required"`
-	Body     string `json:"body" binding:"required"`
-	IsAnon   bool   `json:"is_anon"`
+	Category     string `json:"category" binding:"required"`
+	Title        string `json:"title" binding:"required"`
+	Body         string `json:"body" binding:"required"`
+	IsAnon       bool   `json:"is_anon"`
+	MinReadLevel int16  `json:"min_read_level"`
 }
 
 func (h *Handler) createTopic(c *gin.Context) {
@@ -238,6 +310,7 @@ func (h *Handler) createTopic(c *gin.Context) {
 		Title:        req.Title,
 		Body:         req.Body,
 		IsAnon:       req.IsAnon,
+		MinReadLevel: req.MinReadLevel,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -366,6 +439,18 @@ func (h *Handler) writeError(c *gin.Context, err error) {
 		httpx.Fail(c, 422, "content_blocked", "包含违禁词，无法发布")
 	case errors.Is(err, ErrModerationBlocked):
 		httpx.Fail(c, 422, "moderation_blocked", "未通过 AI 审核，请修改后重试")
+	case errors.Is(err, ErrPostNotFound):
+		httpx.NotFound(c, "post not found")
+	case errors.Is(err, ErrEditForbidden):
+		httpx.Fail(c, 403, "edit_forbidden", "no permission to edit")
+	case errors.Is(err, ErrEditWindowExpired):
+		httpx.Fail(c, 403, "edit_window_expired", "edit window has expired")
+	case errors.Is(err, ErrInvalidReadLevel):
+		httpx.ValidationError(c, "invalid_read_level", "read level exceeds your own level")
+	case errors.Is(err, ErrDuplicateSubmission):
+		httpx.Fail(c, 429, "duplicate_submission", "slow down — duplicate content detected")
+	case errors.Is(err, ErrBotRequired):
+		httpx.Fail(c, 403, "bot_required", "posting in the bot zone requires owning at least one active bot")
 	default:
 		httpx.Internal(c, "internal error")
 	}

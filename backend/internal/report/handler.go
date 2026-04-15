@@ -108,7 +108,8 @@ func (h *Handler) counts(c *gin.Context) {
 }
 
 type handleReq struct {
-	Note string `json:"note"`
+	Note             string `json:"note"`
+	CreditScoreDelta int    `json:"credit_score_delta"`
 }
 
 func (h *Handler) resolve(c *gin.Context) {
@@ -132,7 +133,12 @@ func (h *Handler) handle(c *gin.Context, resolve bool) {
 	}
 	uid, _ := auth.CurrentUserID(c)
 	username, _ := h.users.UsernameByID(uid)
-	in := HandleInput{HandlerID: uid, HandlerUsername: username, Note: req.Note}
+	in := HandleInput{
+		HandlerID:        uid,
+		HandlerUsername:  username,
+		Note:             req.Note,
+		CreditScoreDelta: req.CreditScoreDelta,
+	}
 
 	var rep *Report
 	if resolve {

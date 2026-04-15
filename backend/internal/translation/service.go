@@ -79,6 +79,65 @@ type Result struct {
 	FreeRemaining int    `json:"free_remaining"`
 }
 
+// metaMarkers are English phrases reasoning models emit when they leak
+// their chain-of-thought into the answer instead of just translating.
+// Used by sanitizeTranslation to detect and strip the leaked reasoning.
+var metaMarkers = []string{
+	"let me translate",
+	"i need to translate",
+	"i'll translate",
+	"i will translate",
+	"the text is about",
+	"i'll provide",
+	"here is the translation",
+	"here's the translation",
+	"translation:",
+	"i need to",
+}
+
+// sanitizeTranslation removes leaked reasoning from a model's reply. The
+// llm client already strips <think>...</think> blocks; this catches models
+// that emit free-text reasoning followed by the actual translation. We
+// walk paragraphs from the end and keep the longest contiguous tail with
+// no meta markers — that's the real translation.
+func sanitizeTranslation(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	lower := strings.ToLower(s)
+	hasMeta := false
+	for _, m := range metaMarkers {
+		if strings.Contains(lower, m) {
+			hasMeta = true
+			break
+		}
+	}
+	if !hasMeta {
+		return s
+	}
+	paras := strings.Split(s, "\n\n")
+	cleanStart := len(paras)
+	for i := len(paras) - 1; i >= 0; i-- {
+		p := strings.ToLower(paras[i])
+		bad := false
+		for _, m := range metaMarkers {
+			if strings.Contains(p, m) {
+				bad = true
+				break
+			}
+		}
+		if bad {
+			break
+		}
+		cleanStart = i
+	}
+	if cleanStart >= len(paras) {
+		return s
+	}
+	return strings.TrimSpace(strings.Join(paras[cleanStart:], "\n\n"))
+}
+
 func hashKey(source, lang string) string {
 	h := sha256.Sum256([]byte(lang + ":" + source))
 	return hex.EncodeToString(h[:])
@@ -137,8 +196,10 @@ func (s *Service) Translate(ctx context.Context, userID int64, source, targetLan
 	}
 
 	systemPrompt := fmt.Sprintf(
-		"You are a translation engine. Translate the user's message into %s. "+
-			"Output ONLY the translation, no commentary, no quotes, no labels.",
+		"You are a translation engine. Output ONLY the final translation in %s. "+
+			"Do NOT think out loud. Do NOT explain your reasoning. Do NOT include the source text. "+
+			"Do NOT prefix with \"Translation:\", \"Here is\", or any label. Do NOT wrap in quotes. "+
+			"The first character of your output must be the first character of the translation.",
 		langLabels[targetLang],
 	)
 	started := time.Now()
@@ -151,7 +212,7 @@ func (s *Service) Translate(ctx context.Context, userID int64, source, targetLan
 		}
 		return nil, fmt.Errorf("%w: %v", ErrTranslateFailed, err)
 	}
-	translated = strings.TrimSpace(translated)
+	translated = sanitizeTranslation(translated)
 	if translated == "" {
 		if charge > 0 {
 			_ = s.wallet.Charge(userID, -charge, KindTranslation, "translation_refund", 0, "翻译失败退款")

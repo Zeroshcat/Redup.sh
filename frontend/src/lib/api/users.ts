@@ -82,3 +82,19 @@ export function adminBanUser(id: number) {
 export function adminUnbanUser(id: number) {
   return api<ServerPublicUser>(`/api/admin/users/${id}/unban`, { method: "POST" });
 }
+
+export interface AdjustCreditScoreResp {
+  user_id: number;
+  credit_score: number;
+}
+
+export function adminAdjustCreditScore(
+  id: number,
+  delta: number,
+  reason: string,
+) {
+  return api<AdjustCreditScoreResp>(`/api/admin/users/${id}/credit-score`, {
+    method: "POST",
+    body: { delta, reason },
+  });
+}

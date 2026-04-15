@@ -3,6 +3,7 @@ import remarkGfm from "remark-gfm";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeHighlight from "rehype-highlight";
 import Link from "next/link";
+import { CodeBlock } from "./CodeBlock";
 import "./markdown-highlight.css";
 
 const sanitizeSchema = {
@@ -69,7 +70,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
           ol: ({ children }) => <ol className="my-3 ml-5 list-decimal space-y-1">{children}</ol>,
           li: ({ children }) => <li className="leading-relaxed">{children}</li>,
           blockquote: ({ children }) => (
-            <blockquote className="my-3 border-l-4 border-border bg-muted/60 px-4 py-2 text-muted-foreground">
+            <blockquote className="my-4 rounded-r-md border-l-4 border-primary/60 bg-muted/50 px-4 py-2 italic text-muted-foreground [&>p]:my-1">
               {children}
             </blockquote>
           ),
@@ -78,7 +79,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
             if (isInline) {
               return (
                 <code
-                  className="rounded bg-muted px-1.5 py-0.5 font-mono text-[13px] text-foreground"
+                  className="font-mono text-[0.9em] text-rose-600 dark:text-rose-300"
                   {...props}
                 >
                   {children}
@@ -91,11 +92,27 @@ export function MarkdownRenderer({ content }: { content: string }) {
               </code>
             );
           },
-          pre: ({ children }) => (
-            <pre className="my-4 overflow-x-auto rounded-lg border border-border bg-muted/50 p-4 text-[13px] leading-relaxed">
-              {children}
-            </pre>
-          ),
+          pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+          img: ({ src, alt }) =>
+            src ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={src}
+                alt={alt ?? ""}
+                loading="lazy"
+                className="my-4 max-h-[520px] rounded-lg border border-border object-contain"
+              />
+            ) : null,
+          input: ({ type, checked, disabled }) =>
+            type === "checkbox" ? (
+              <input
+                type="checkbox"
+                checked={checked}
+                disabled={disabled}
+                readOnly
+                className="mr-1.5 h-3.5 w-3.5 translate-y-[1px] accent-primary"
+              />
+            ) : null,
           a: ({ href, children }) => (
             <a
               href={href}
@@ -107,19 +124,19 @@ export function MarkdownRenderer({ content }: { content: string }) {
             </a>
           ),
           table: ({ children }) => (
-            <div className="my-4 overflow-x-auto">
-              <table className="w-full border-collapse border border-border text-sm">
+            <div className="my-4 overflow-x-auto rounded-lg border border-border">
+              <table className="w-full border-collapse text-sm [&_tr:nth-child(even)]:bg-muted/40">
                 {children}
               </table>
             </div>
           ),
           th: ({ children }) => (
-            <th className="border border-border bg-muted/60 px-3 py-1.5 text-left font-semibold">
+            <th className="border-b border-border bg-muted/60 px-3 py-2 text-left font-semibold">
               {children}
             </th>
           ),
           td: ({ children }) => (
-            <td className="border border-border px-3 py-1.5">{children}</td>
+            <td className="border-b border-border/60 px-3 py-1.5">{children}</td>
           ),
           hr: () => <hr className="my-6 border-border" />,
           strong: ({ children }) => <strong className="font-semibold">{children}</strong>,

@@ -10,7 +10,7 @@ import { useAuthStore } from "@/store/auth";
 
 const MENU_ITEMS = [
   { href: "/u/{username}", label: "个人主页", icon: "👤" },
-  { href: "/u/{username}?tab=bots", label: "我的 Bot", icon: "⚡" },
+  { href: "/my-bots", label: "我的 Bot", icon: "⚡" },
   { href: "/wallet", label: "我的钱包", icon: "✦" },
   { href: "/messages", label: "私信", icon: "💬" },
   { href: "/notifications", label: "通知中心", icon: "🔔" },

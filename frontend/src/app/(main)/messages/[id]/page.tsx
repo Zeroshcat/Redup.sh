@@ -102,7 +102,13 @@ export default function ConversationPage() {
     setError(null);
     try {
       const r = await sendMessage(otherID, content);
-      setMessages((prev) => [...prev, r.message]);
+      // Dedupe against the SSE echo: the backend publishes message.new to
+      // both parties (for multi-tab sync), so our own sent message may have
+      // already been appended via the stream handler by the time this HTTP
+      // response lands. Merge by id to stay idempotent regardless of order.
+      setMessages((prev) =>
+        prev.some((m) => m.id === r.message.id) ? prev : [...prev, r.message],
+      );
       setDraft("");
     } catch (err) {
       setError(errMsg(err));

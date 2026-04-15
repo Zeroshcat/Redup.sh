@@ -51,10 +51,14 @@ export function getReportCounts() {
   return api<ReportCounts>("/api/admin/reports/counts");
 }
 
-export function resolveReport(id: number, note = "") {
+export function resolveReport(
+  id: number,
+  note = "",
+  creditScoreDelta = 0,
+) {
   return api<ServerReport>(`/api/admin/reports/${id}/resolve`, {
     method: "POST",
-    body: { note },
+    body: { note, credit_score_delta: creditScoreDelta },
   });
 }
 

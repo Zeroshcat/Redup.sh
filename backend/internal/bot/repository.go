@@ -66,6 +66,19 @@ func (r *Repository) ListActiveModerators() ([]Bot, error) {
 	return items, err
 }
 
+// CountActiveByOwner returns how many active bots the user owns. Used by
+// the forum service to gate topic creation in bot-type categories.
+func (r *Repository) CountActiveByOwner(ownerID int64) (int64, error) {
+	if ownerID == 0 {
+		return 0, nil
+	}
+	var n int64
+	err := r.db.Model(&Bot{}).
+		Where("owner_user_id = ? AND status = ?", ownerID, StatusActive).
+		Count(&n).Error
+	return n, err
+}
+
 func (r *Repository) Delete(id int64) error {
 	return r.db.Delete(&Bot{}, id).Error
 }

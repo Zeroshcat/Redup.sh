@@ -2,26 +2,36 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { CategoryRulesCard } from "@/components/forum/CategoryRulesCard";
-import { TopicCard } from "@/components/forum/TopicCard";
+import { TopicListInfinite } from "@/components/forum/TopicListInfinite";
 import { fetchCategory, fetchTopics } from "@/lib/api/forum-server";
 
-const sortTabs = [
-  { key: "hot", label: "热门" },
+type Sort = "latest" | "hot" | "top";
+const sortTabs: { key: Sort; label: string }[] = [
   { key: "latest", label: "最新" },
+  { key: "hot", label: "热门" },
   { key: "top", label: "精选" },
 ];
 
+function parseSort(v: string | string[] | undefined): Sort {
+  const s = Array.isArray(v) ? v[0] : v;
+  return s === "hot" || s === "top" ? s : "latest";
+}
+
 export default async function CategoryPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ category: string }>;
+  searchParams: Promise<{ sort?: string }>;
 }) {
   const { category } = await params;
+  const { sort: rawSort } = await searchParams;
+  const sort = parseSort(rawSort);
 
   const cat = await fetchCategory(category);
   if (!cat) notFound();
 
-  const topics = await fetchTopics({ category, sort: "hot" });
+  const topics = await fetchTopics({ category, sort, limit: 20 });
 
   const isAnon = cat.type === "anon";
   const isBot = cat.type === "bot";
@@ -81,19 +91,28 @@ export default async function CategoryPage({
 
         {cat.rules && <CategoryRulesCard rules={cat.rules} />}
 
-        <div className="mb-4 flex items-center gap-1 rounded-lg border border-border bg-card p-1">
-          {sortTabs.map((tab, i) => (
-            <button
-              key={tab.key}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
-                i === 0
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-accent"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        <div className="mb-4 inline-flex items-center gap-0.5 rounded-lg border border-border bg-card p-0.5">
+          {sortTabs.map((tab) => {
+            const active = tab.key === sort;
+            return (
+              <Link
+                key={tab.key}
+                href={
+                  tab.key === "latest"
+                    ? `/${category}`
+                    : `/${category}?sort=${tab.key}`
+                }
+                scroll={false}
+                className={`rounded-md px-3 py-1 text-xs font-medium transition ${
+                  active
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                }`}
+              >
+                {tab.label}
+              </Link>
+            );
+          })}
         </div>
 
         {topics.length === 0 ? (
@@ -108,11 +127,11 @@ export default async function CategoryPage({
             </Link>
           </div>
         ) : (
-          <div className="space-y-3">
-            {topics.map((t) => (
-              <TopicCard key={t.id} topic={t} />
-            ))}
-          </div>
+          <TopicListInfinite
+            key={sort}
+            initialTopics={topics}
+            query={{ category, sort }}
+          />
         )}
       </section>
     </main>

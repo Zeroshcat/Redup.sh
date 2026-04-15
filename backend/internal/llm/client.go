@@ -15,9 +15,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
+
+// thinkTagRe matches the chain-of-thought blocks emitted by reasoning
+// models (DeepSeek-R1, Qwen-thinking, GPT-OSS, ...) when they leak the CoT
+// into the main content channel instead of a separate reasoning_content
+// field. We strip these centrally so every feature gets a clean answer.
+var thinkTagRe = regexp.MustCompile(`(?is)<think>.*?</think>`)
+
+func stripThinking(s string) string {
+	return strings.TrimSpace(thinkTagRe.ReplaceAllString(s, ""))
+}
 
 // Client is the narrow interface a platform feature calls. Implementations
 // are provider-specific (OpenAI, Anthropic, ...).
@@ -33,19 +45,78 @@ type CallObserver interface {
 	OnLLMCall(CallLog)
 }
 
+// ProviderConfig is the subset of site.LLMProvider the router needs to
+// construct a client. Mirrored here (rather than importing site) so the
+// llm package stays free of cross-module deps.
+type ProviderConfig struct {
+	ID      string
+	Kind    string // "openai" | "anthropic"
+	BaseURL string
+	APIKey  string
+	Enabled bool
+}
+
 // Router dispatches a Complete call to the right backend based on a string
-// provider key. main.go registers whichever providers have keys configured.
+// provider key. main.go loads providers from site_settings at boot and
+// reloads them in place whenever admins update the list — the mutex here
+// makes that reload safe to race against in-flight Complete calls.
 type Router struct {
+	mu       sync.RWMutex
 	clients  map[string]Client
 	observer CallObserver
+	timeout  time.Duration
 }
 
 func NewRouter() *Router {
-	return &Router{clients: map[string]Client{}}
+	return &Router{
+		clients: map[string]Client{},
+		timeout: 30 * time.Second,
+	}
 }
 
+// SetTimeout overrides the default per-call HTTP timeout. Used by
+// ReplaceProviders when constructing new clients.
+func (r *Router) SetTimeout(d time.Duration) {
+	if d > 0 {
+		r.mu.Lock()
+		r.timeout = d
+		r.mu.Unlock()
+	}
+}
+
+// Register is the legacy static-config entry point. Kept for tests and
+// edge cases that want to inject a mock client. Production code should
+// go through ReplaceProviders so the admin panel stays authoritative.
 func (r *Router) Register(provider string, c Client) {
+	r.mu.Lock()
 	r.clients[provider] = c
+	r.mu.Unlock()
+}
+
+// ReplaceProviders atomically rebuilds the client map from a provider
+// list. Disabled entries and entries missing credentials are skipped —
+// they stay on the list so admins can toggle without retyping keys,
+// but they won't be dispatched to.
+func (r *Router) ReplaceProviders(providers []ProviderConfig) {
+	r.mu.Lock()
+	timeout := r.timeout
+	r.mu.Unlock()
+
+	next := map[string]Client{}
+	for _, p := range providers {
+		if !p.Enabled || p.ID == "" || p.APIKey == "" {
+			continue
+		}
+		switch p.Kind {
+		case "openai":
+			next[p.ID] = NewOpenAIClient(p.APIKey, p.BaseURL, timeout)
+		case "anthropic":
+			next[p.ID] = NewAnthropicClient(p.APIKey, p.BaseURL, timeout)
+		}
+	}
+	r.mu.Lock()
+	r.clients = next
+	r.mu.Unlock()
 }
 
 // SetObserver attaches the call observer. Call once at boot from main.go.
@@ -83,7 +154,9 @@ func (r *Router) Complete(ctx context.Context, provider, model, systemPrompt, us
 }
 
 func (r *Router) doComplete(ctx context.Context, provider, model, systemPrompt, userMessage string) (string, error) {
+	r.mu.RLock()
 	c, ok := r.clients[provider]
+	r.mu.RUnlock()
 	if !ok {
 		return "", fmt.Errorf("provider %q not configured", provider)
 	}
@@ -91,6 +164,8 @@ func (r *Router) doComplete(ctx context.Context, provider, model, systemPrompt, 
 }
 
 func (r *Router) Available() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := make([]string, 0, len(r.clients))
 	for k := range r.clients {
 		out = append(out, k)
@@ -176,7 +251,7 @@ func (c *OpenAIClient) Complete(ctx context.Context, systemPrompt, userMessage, 
 	if len(out.Choices) == 0 {
 		return "", errors.New("openai: empty response")
 	}
-	return strings.TrimSpace(out.Choices[0].Message.Content), nil
+	return stripThinking(out.Choices[0].Message.Content), nil
 }
 
 // ---------- Anthropic ----------
@@ -265,7 +340,7 @@ func (c *AnthropicClient) Complete(ctx context.Context, systemPrompt, userMessag
 			sb.WriteString(c.Text)
 		}
 	}
-	s := strings.TrimSpace(sb.String())
+	s := stripThinking(sb.String())
 	if s == "" {
 		return "", errors.New("anthropic: empty response")
 	}

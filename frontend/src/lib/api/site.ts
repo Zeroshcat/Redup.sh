@@ -1,5 +1,5 @@
 import { api } from "@/lib/api-client";
-import { apiServer, ServerAPIError } from "./server";
+import { apiServer } from "./server";
 
 // Shapes mirror backend internal/platform/site/model.go
 
@@ -11,6 +11,8 @@ export interface SiteBasic {
   contact_email?: string;
   language: string;
   timezone: string;
+  post_edit_window_minutes: number;
+  outbound_proxy_url?: string;
 }
 
 export interface SiteRegistration {
@@ -88,6 +90,27 @@ export interface SiteModeration {
   suggest_rewrite: boolean;
 }
 
+export type LLMProviderKind = "openai" | "anthropic";
+
+export interface SiteLLMProvider {
+  id: string;
+  name: string;
+  kind: LLMProviderKind;
+  base_url: string;
+  // On read the server masks real keys with "••••••••". On write, the
+  // client sends the empty string (or the mask string) to mean "keep
+  // the stored key" — the backend treats both as a signal to preserve
+  // the existing credential. Typing a new key replaces it.
+  api_key: string;
+  enabled: boolean;
+  models?: string[];
+  note?: string;
+}
+
+export interface SiteLLM {
+  providers: SiteLLMProvider[];
+}
+
 export interface SiteSnapshot {
   basic: SiteBasic;
   registration: SiteRegistration;
@@ -97,6 +120,7 @@ export interface SiteSnapshot {
   anon: SiteAnon;
   credits: SiteCredits;
   moderation: SiteModeration;
+  llm: SiteLLM;
 }
 
 export interface SitePublicInfo {
@@ -156,4 +180,8 @@ export function saveSiteCredits(v: SiteCredits) {
 
 export function saveSiteModeration(v: SiteModeration) {
   return api<SiteModeration>("/api/admin/site/moderation", { method: "PUT", body: v });
+}
+
+export function saveSiteLLM(v: SiteLLM) {
+  return api<SiteLLM>("/api/admin/site/llm", { method: "PUT", body: v });
 }

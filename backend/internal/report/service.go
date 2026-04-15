@@ -36,14 +36,16 @@ type Service struct {
 	repo      *Repository
 	notifier  Notifier
 	publisher Publisher
+	penalizer CreditPenalizer
 }
 
 func NewService(repo *Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) SetNotifier(n Notifier)   { s.notifier = n }
-func (s *Service) SetPublisher(p Publisher) { s.publisher = p }
+func (s *Service) SetNotifier(n Notifier)               { s.notifier = n }
+func (s *Service) SetPublisher(p Publisher)             { s.publisher = p }
+func (s *Service) SetCreditPenalizer(p CreditPenalizer) { s.penalizer = p }
 
 func validReason(r string) bool {
 	switch r {
@@ -176,6 +178,17 @@ type HandleInput struct {
 	HandlerID       int64
 	HandlerUsername string
 	Note            string
+	// CreditScoreDelta is an optional signed adjustment applied to the
+	// reported target's credit score when the report is Resolved. Positive
+	// restores, negative penalizes. Zero skips. Ignored on Dismiss.
+	CreditScoreDelta int
+}
+
+// CreditPenalizer resolves a report target (user / topic / post) to its
+// owning user and applies a credit-score delta. Kept as a narrow interface
+// so the report service doesn't import user / forum directly.
+type CreditPenalizer interface {
+	PenalizeReportTarget(targetType string, targetID int64, delta int) error
 }
 
 func (s *Service) handle(id int64, status string, in HandleInput) (*Report, error) {
@@ -202,6 +215,14 @@ func (s *Service) handle(id int64, status string, in HandleInput) (*Report, erro
 	rep.HandledAt = &now
 	if err := s.repo.UpdateStatus(rep); err != nil {
 		return nil, err
+	}
+	if status == StatusResolved && in.CreditScoreDelta != 0 && s.penalizer != nil {
+		// Best-effort: a penalizer failure shouldn't block the resolve
+		// itself, but we capture it in the note so the admin can see it.
+		if err := s.penalizer.PenalizeReportTarget(rep.TargetType, rep.TargetID, in.CreditScoreDelta); err != nil {
+			rep.ResolutionNote = strings.TrimSpace(rep.ResolutionNote+" [credit penalty failed: "+err.Error()+"]")
+			_ = s.repo.UpdateStatus(rep)
+		}
 	}
 	if s.notifier != nil && rep.ReporterUserID != 0 {
 		s.notifier.NotifyReportHandled(rep.ReporterUserID, status == StatusResolved, rep.TargetTitle, note)

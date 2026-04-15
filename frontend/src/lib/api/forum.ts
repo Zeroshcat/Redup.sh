@@ -26,6 +26,7 @@ export interface ServerTopic {
   id: number;
   category_id: number;
   category_slug?: string;
+  category_name?: string;
   user_id: number;
   user?: ServerUserRef;
   title: string;
@@ -42,6 +43,8 @@ export interface ServerTopic {
   like_count: number;
   last_post_at: string;
   created_at: string;
+  edited_at?: string;
+  min_read_level?: number;
   user_liked?: boolean;
   user_bookmarked?: boolean;
 }
@@ -71,6 +74,7 @@ export interface ServerPost {
   bot_id?: number;
   bot?: ServerBotRef;
   created_at: string;
+  edited_at?: string;
   user_liked?: boolean;
 }
 
@@ -91,6 +95,8 @@ export interface ListTopicsParams {
   category?: string;
   sort?: "hot" | "latest" | "top";
   limit?: number;
+  offset?: number;
+  type?: "normal" | "anon" | "bot";
 }
 
 export function listTopics(params: ListTopicsParams = {}) {
@@ -98,12 +104,22 @@ export function listTopics(params: ListTopicsParams = {}) {
   if (params.category) q.set("category", params.category);
   if (params.sort) q.set("sort", params.sort);
   if (params.limit) q.set("limit", String(params.limit));
+  if (params.offset) q.set("offset", String(params.offset));
+  if (params.type) q.set("type", params.type);
   const qs = q.toString();
   return api<ServerTopic[]>(`/api/topics${qs ? `?${qs}` : ""}`, { auth: false });
 }
 
 export function getTopic(id: number) {
   return api<ServerTopicDetail>(`/api/topics/${id}`, { auth: false });
+}
+
+// getTopicAuthed is the authed variant used exclusively for client-side
+// rehydration of user_liked / user_bookmarked after SSR. The backend
+// endpoint is OptionalAuth, so this works for guests too; the difference
+// vs getTopic() is just that we forward the caller's token when present.
+export function getTopicAuthed(id: number) {
+  return api<ServerTopicDetail>(`/api/topics/${id}`);
 }
 
 export function getFeed(limit = 50) {
@@ -115,6 +131,7 @@ export interface CreateTopicInput {
   title: string;
   body: string;
   is_anon?: boolean;
+  min_read_level?: number;
 }
 
 export function createTopic(input: CreateTopicInput) {
@@ -133,6 +150,20 @@ export function createPost(topicId: number, input: CreatePostInput) {
   return api<ServerPost>(`/api/topics/${topicId}/posts`, {
     method: "POST",
     body: input,
+  });
+}
+
+export function updateTopicBody(topicId: number, body: string) {
+  return api<ServerTopic>(`/api/topics/${topicId}/body`, {
+    method: "PATCH",
+    body: { body },
+  });
+}
+
+export function updatePostContent(postId: number, content: string) {
+  return api<ServerPost>(`/api/posts/${postId}`, {
+    method: "PATCH",
+    body: { content },
   });
 }
 

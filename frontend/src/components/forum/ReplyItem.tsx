@@ -1,9 +1,10 @@
 import Link from "next/link";
 import type { Post } from "@/types";
 import { AuthorAvatar, authorDisplayName } from "./AuthorAvatar";
+import { EditableBody } from "./EditableBody";
 import { LikeButton } from "./LikeButton";
+import { ReplyButton } from "./ReplyButton";
 import { ReportButton } from "./ReportButton";
-import { TranslatableContent } from "@/components/markdown/TranslatableContent";
 import { timeAgo } from "@/lib/utils-time";
 
 export function ReplyItem({ post, topicTitle }: { post: Post; topicTitle?: string }) {
@@ -28,7 +29,7 @@ export function ReplyItem({ post, topicTitle }: { post: Post; topicTitle?: strin
   return (
     <article
       id={`floor-${post.floor}`}
-      className={`flex gap-4 py-6 ${isBot ? "bg-violet-500/5" : ""}`}
+      className={`flex scroll-mt-20 gap-4 py-6 ${isBot ? "bg-violet-500/5" : ""}`}
     >
       <div className="shrink-0">
         {authorHref ? (
@@ -59,13 +60,27 @@ export function ReplyItem({ post, topicTitle }: { post: Post; topicTitle?: strin
           )}
           <span className="text-muted-foreground">·</span>
           <span className="text-muted-foreground">{timeAgo(post.createdAt)}</span>
+          {post.editedAt && (
+            <>
+              <span className="text-muted-foreground">·</span>
+              <span
+                className="text-muted-foreground/80"
+                title={new Date(post.editedAt).toLocaleString()}
+              >
+                已编辑 {timeAgo(post.editedAt)}
+              </span>
+            </>
+          )}
           <span className="ml-auto font-mono text-[10px] text-muted-foreground">#{post.floor}</span>
         </div>
 
         {post.replyTo && (
-          <div className="mb-2 rounded border-l-2 border-border bg-muted/60 px-2 py-1 text-xs text-muted-foreground">
+          <a
+            href={`#floor-${post.replyTo.floor}`}
+            className="mb-2 block rounded border-l-2 border-border bg-muted/60 px-2 py-1 text-xs text-muted-foreground hover:border-primary hover:bg-muted hover:text-foreground"
+          >
             回复 <span className="font-medium">#{post.replyTo.floor} {post.replyTo.authorName}</span>
-          </div>
+          </a>
         )}
 
         {post.author.type === "user" && post.author.user.isBanned ? (
@@ -73,7 +88,12 @@ export function ReplyItem({ post, topicTitle }: { post: Post; topicTitle?: strin
             🚫 此用户已被封禁，内容已隐藏
           </div>
         ) : (
-          <TranslatableContent content={post.content} />
+          <EditableBody
+            target={{ kind: "post", id: post.id }}
+            content={post.content}
+            ownerUserId={post.author.type === "user" ? post.author.user.id : undefined}
+            authorType={post.author.type}
+          />
         )}
 
         <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
@@ -83,7 +103,7 @@ export function ReplyItem({ post, topicTitle }: { post: Post; topicTitle?: strin
             initialLiked={post.userLiked}
             initialCount={post.likeCount}
           />
-          <button className="inline-flex items-center gap-1 hover:text-foreground">💬 回复</button>
+          <ReplyButton target={{ floor: post.floor, authorName: name }} />
           <ReportButton
             targetType="post"
             targetId={post.id}

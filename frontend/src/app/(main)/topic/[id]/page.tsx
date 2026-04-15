@@ -2,7 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AuthorAvatar, authorDisplayName } from "@/components/forum/AuthorAvatar";
 import { ReplyItem } from "@/components/forum/ReplyItem";
+import { ReplyButton } from "@/components/forum/ReplyButton";
 import { ReplyComposer } from "@/components/forum/ReplyComposer";
+import { TopicContentGuard } from "@/components/forum/TopicContentGuard";
+import { TopicStateHydrator } from "@/components/forum/TopicStateHydrator";
 import { TopicTimeline } from "@/components/forum/TopicTimeline";
 import { LikeButton } from "@/components/forum/LikeButton";
 import { BookmarkButton } from "@/components/forum/BookmarkButton";
@@ -11,7 +14,7 @@ import { PinBadge } from "@/components/forum/PinBadge";
 import { ReportButton } from "@/components/forum/ReportButton";
 import { SummonBotButton } from "@/components/forum/SummonBotButton";
 import { TopicAdminBar } from "@/components/forum/TopicAdminBar";
-import { TranslatableContent } from "@/components/markdown/TranslatableContent";
+import { EditableBody } from "@/components/forum/EditableBody";
 import { fetchTopicDetail } from "@/lib/api/forum-server";
 import { timeAgo } from "@/lib/utils-time";
 
@@ -34,12 +37,13 @@ export default async function TopicPage({
 
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-1 gap-8 px-4 py-8">
+      <TopicStateHydrator topicId={topic.id} />
       <section className="min-w-0 flex-1">
         <nav className="mb-4 text-xs text-muted-foreground">
           <Link href="/" className="hover:text-foreground">首页</Link>
           <span className="mx-1.5">›</span>
           <Link href={`/${topic.categorySlug}`} className="hover:text-foreground">
-            {topic.categorySlug}
+            {topic.categoryName ?? topic.categorySlug}
           </Link>
         </nav>
 
@@ -59,7 +63,7 @@ export default async function TopicPage({
               href={`/${topic.categorySlug}`}
               className="rounded bg-muted px-1.5 py-0.5 font-medium text-foreground hover:bg-accent"
             >
-              {topic.categorySlug}
+              {topic.categoryName ?? topic.categorySlug}
             </Link>
             {topic.tags?.map((t) => (
               <span key={t} className="text-muted-foreground">
@@ -72,7 +76,7 @@ export default async function TopicPage({
         <div className="divide-y divide-border">
           <article
             id="floor-1"
-            className={`flex gap-4 py-6 ${isBot ? "bg-violet-500/5" : ""}`}
+            className={`flex scroll-mt-20 gap-4 py-6 ${isBot ? "bg-violet-500/5" : ""}`}
           >
             <div className="shrink-0">
               {topic.author.type === "user" ? (
@@ -117,6 +121,17 @@ export default async function TopicPage({
                 )}
                 <span className="text-muted-foreground">·</span>
                 <span className="text-muted-foreground">{timeAgo(topic.createdAt)}</span>
+                {topic.editedAt && (
+                  <>
+                    <span className="text-muted-foreground">·</span>
+                    <span
+                      className="text-muted-foreground/80"
+                      title={new Date(topic.editedAt).toLocaleString()}
+                    >
+                      已编辑 {timeAgo(topic.editedAt)}
+                    </span>
+                  </>
+                )}
                 <span className="ml-auto font-mono text-[10px] text-muted-foreground">#1</span>
               </div>
 
@@ -125,7 +140,17 @@ export default async function TopicPage({
                   🚫 此用户已被封禁，内容已隐藏
                 </div>
               ) : (
-                <TranslatableContent content={topic.body ?? topic.excerpt} />
+                <TopicContentGuard
+                  minReadLevel={topic.minReadLevel ?? 0}
+                  authorId={topic.author.type === "user" ? topic.author.user.id : undefined}
+                >
+                  <EditableBody
+                    target={{ kind: "topic", id: topic.id }}
+                    content={topic.body ?? topic.excerpt}
+                    ownerUserId={topic.author.type === "user" ? topic.author.user.id : undefined}
+                    authorType={topic.author.type}
+                  />
+                </TopicContentGuard>
               )}
 
               <div className="mt-4 flex items-center gap-4 text-xs text-muted-foreground">
@@ -135,7 +160,7 @@ export default async function TopicPage({
                   initialLiked={topic.userLiked}
                   initialCount={topic.likeCount}
                 />
-                <button className="inline-flex items-center gap-1 hover:text-foreground">💬 回复</button>
+                <ReplyButton />
                 <BookmarkButton topicId={topic.id} initialBookmarked={topic.userBookmarked} />
                 <button className="inline-flex items-center gap-1 hover:text-foreground">🔗 分享</button>
                 <SummonBotButton topicId={topic.id} />
@@ -151,9 +176,14 @@ export default async function TopicPage({
             </div>
           </article>
 
-          {posts.map((p) => (
-            <ReplyItem key={p.id} post={p} topicTitle={topic.title} />
-          ))}
+          <TopicContentGuard
+            minReadLevel={topic.minReadLevel ?? 0}
+            authorId={topic.author.type === "user" ? topic.author.user.id : undefined}
+          >
+            {posts.map((p) => (
+              <ReplyItem key={p.id} post={p} topicTitle={topic.title} />
+            ))}
+          </TopicContentGuard>
         </div>
 
         <div className="mt-8">

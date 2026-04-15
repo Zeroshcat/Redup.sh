@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { MarkdownEditor } from "@/components/markdown/MarkdownEditor";
 import { createTopic, listCategories, type ServerCategory } from "@/lib/api/forum";
+import { listBots } from "@/lib/api/bot";
 import { APIError } from "@/lib/api-client";
 import { useAuthStore } from "@/store/auth";
 
@@ -32,9 +33,17 @@ function NewTopicInner() {
   const [tagInput, setTagInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [anon, setAnon] = useState(false);
+  const [minReadLevel, setMinReadLevel] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestion, setSuggestion] = useState<string | null>(null);
+  // Tri-state: null = still checking, true/false once the listBots call
+  // has resolved. Used to gate topic creation in bot-type categories.
+  const [hasActiveBot, setHasActiveBot] = useState<boolean | null>(null);
+  // submittingRef is the authoritative lock: React batches setLoading, so a
+  // rapid double-click can both read loading===false and both start fetching.
+  // A plain ref updates synchronously and prevents the second call entirely.
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     listCategories()
@@ -52,9 +61,25 @@ function NewTopicInner() {
       });
   }, [searchParams]);
 
+  // Check whether the logged-in user owns an active bot. This gates
+  // creating topics in bot-type categories — only bot builders can start
+  // threads there. Server-side enforces the same rule as a hard guard.
+  useEffect(() => {
+    if (!user) {
+      setHasActiveBot(false);
+      return;
+    }
+    listBots()
+      .then((r) => {
+        setHasActiveBot(r.items.some((b) => b.owner_user_id === user.id));
+      })
+      .catch(() => setHasActiveBot(false));
+  }, [user]);
+
   const category = categories.find((c) => c.slug === categorySlug);
   const isAnonCategory = category?.type === "anon";
   const isBotCategory = category?.type === "bot";
+  const botGateBlocked = isBotCategory && hasActiveBot === false;
 
   function addTag() {
     const t = tagInput.trim();
@@ -71,10 +96,12 @@ function NewTopicInner() {
     !!user &&
     [...title.trim()].length >= 2 &&
     [...body.trim()].length >= 2 &&
-    categorySlug !== "";
+    categorySlug !== "" &&
+    !botGateBlocked;
 
   async function onSubmit() {
-    if (!canSubmit || loading) return;
+    if (!canSubmit || submittingRef.current) return;
+    submittingRef.current = true;
     setError(null);
     setSuggestion(null);
     setLoading(true);
@@ -84,6 +111,7 @@ function NewTopicInner() {
         title: title.trim(),
         body: body.trim(),
         is_anon: anon || isAnonCategory,
+        min_read_level: minReadLevel,
       });
       router.push(`/topic/${topic.id}`);
     } catch (err) {
@@ -97,6 +125,7 @@ function NewTopicInner() {
         setError("发布失败");
       }
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   }
@@ -176,9 +205,18 @@ function NewTopicInner() {
               ⚠ 匿名板块强制匿名，发帖后无法看到你的真实账号，但平台后台可追溯。
             </div>
           )}
-          {isBotCategory && (
+          {isBotCategory && hasActiveBot !== false && (
             <div className="mt-2 rounded border border-violet-500/30 bg-violet-500/5 px-3 py-2 text-xs text-violet-600 dark:text-violet-400">
               🤖 Bot 板块：你的帖子可能被 Bot 自动回复。
+            </div>
+          )}
+          {botGateBlocked && (
+            <div className="mt-2 rounded border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              ⚠ 在 Bot 区发帖需要你先拥有至少一个已审核通过的 Bot。
+              没有 Bot 仍然可以正常回复他人的帖子。
+              <Link href="/bot" className="ml-1 underline hover:opacity-80">
+                去创建一个 Bot →
+              </Link>
             </div>
           )}
         </div>
@@ -191,7 +229,7 @@ function NewTopicInner() {
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="清晰描述你的问题或话题"
+            placeholder="请输入标题"
             maxLength={200}
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-base outline-none focus:border-ring"
           />
@@ -282,17 +320,38 @@ function NewTopicInner() {
           </div>
         )}
 
-        <div className="flex items-center justify-between border-t border-border pt-5">
-          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={anon || isAnonCategory}
-              onChange={(e) => setAnon(e.target.checked)}
-              disabled={isAnonCategory}
-              className="h-4 w-4"
-            />
-            匿名发帖
-          </label>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5">
+          <div className="flex flex-wrap items-center gap-4">
+            {isAnonCategory && (
+              <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked
+                  disabled
+                  className="h-4 w-4"
+                />
+                匿名发帖（当前板块强制匿名）
+              </label>
+            )}
+
+            {user && user.level >= 1 && (
+              <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                阅读等级限制：
+                <select
+                  value={minReadLevel}
+                  onChange={(e) => setMinReadLevel(Number(e.target.value))}
+                  className="rounded-md border border-input bg-background px-2 py-1 text-sm outline-none focus:border-ring"
+                >
+                  <option value={0}>所有人</option>
+                  {Array.from({ length: user.level }, (_, i) => i + 1).map((lv) => (
+                    <option key={lv} value={lv}>
+                      Lv.{lv} 以上
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
 
           <div className="flex gap-2">
             <Link
@@ -322,6 +381,12 @@ function errorMessage(err: APIError): string {
       return "标题需要 2–200 字符";
     case "invalid_content":
       return "正文不能为空";
+    case "invalid_read_level":
+      return "阅读等级不能高于你自己的等级";
+    case "duplicate_submission":
+      return "你刚刚已经发过同样的内容了，请稍等几秒再试";
+    case "bot_required":
+      return "在 Bot 区发帖需要你先拥有至少一个已审核通过的 Bot";
     case "not_found":
       return "板块不存在";
     case "unauthorized":

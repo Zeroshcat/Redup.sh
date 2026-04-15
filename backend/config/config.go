@@ -21,13 +21,9 @@ type Config struct {
 	AnonIDPrefix     string
 	SnowflakeNodeID  int
 
-	BotEnabled       bool
-	BotTimeoutSec    int
-	BotMaxContext    int
-	OpenAIAPIKey     string
-	OpenAIBaseURL    string
-	AnthropicAPIKey  string
-	AnthropicBaseURL string
+	BotEnabled    bool
+	BotTimeoutSec int
+	BotMaxContext int
 
 	SentryDSN         string
 	SentryEnvironment string
@@ -52,13 +48,15 @@ func Load() *Config {
 		AnonIDPrefix:     envStr("ANON_ID_PREFIX", "Anon"),
 		SnowflakeNodeID:  envInt("SNOWFLAKE_NODE_ID", 1),
 
-		BotEnabled:       envBool("BOT_ENABLED", false),
-		BotTimeoutSec:    envInt("BOT_TIMEOUT_SEC", 15),
-		BotMaxContext:    envInt("BOT_MAX_CONTEXT", 20),
-		OpenAIAPIKey:     envStr("OPENAI_API_KEY", ""),
-		OpenAIBaseURL:    envStr("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-		AnthropicAPIKey:  envStr("ANTHROPIC_API_KEY", ""),
-		AnthropicBaseURL: envStr("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1"),
+		BotEnabled:    envBool("BOT_ENABLED", false),
+		BotTimeoutSec: envInt("BOT_TIMEOUT_SEC", 15),
+		BotMaxContext: envInt("BOT_MAX_CONTEXT", 20),
+
+		// NOTE: LLM provider credentials (OpenAI, Anthropic, DeepSeek, …)
+		// live in site_settings.llm and are managed exclusively from
+		// /admin/site → LLM 提供方. There are intentionally no env vars
+		// for them anymore — one source of truth, editable without a
+		// redeploy.
 
 		SentryDSN:         envStr("SENTRY_DSN", ""),
 		SentryEnvironment: envStr("SENTRY_ENVIRONMENT", "development"),

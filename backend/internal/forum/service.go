@@ -2,9 +2,13 @@ package forum
 
 import (
 	"errors"
+	"log"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
+
+	"github.com/redup/backend/internal/platform/rbac"
 )
 
 var (
@@ -20,7 +24,32 @@ var (
 	ErrInvalidPinLevel   = errors.New("invalid pin level")
 	ErrContentBlocked    = errors.New("content blocked by filter")
 	ErrModerationBlocked = errors.New("content blocked by moderator")
+	ErrPostNotFound       = errors.New("post not found")
+	ErrEditForbidden      = errors.New("edit forbidden")
+	ErrEditWindowExpired  = errors.New("edit window expired")
+	ErrInvalidReadLevel    = errors.New("invalid read level")
+	ErrDuplicateSubmission = errors.New("duplicate submission")
+	ErrBotRequired         = errors.New("bot ownership required")
 )
+
+// BotOwnershipChecker is the narrow interface forum uses to verify a
+// user owns at least one active bot — gates topic creation in bot-type
+// categories. Kept as an interface so forum doesn't import bot.
+type BotOwnershipChecker interface {
+	HasActiveBot(userID int64) (bool, error)
+}
+
+// duplicateWindow is how long the dedup window looks back for a matching
+// topic/post from the same author. 10 seconds comfortably covers rapid
+// double-click mis-fires without rejecting genuine re-post attempts.
+const duplicateWindow = 10 * time.Second
+
+// EditWindowSource lets the forum service read the current edit window
+// (in minutes) from site settings without importing the site package.
+// A zero return disables the author-edit path; only EditAny bypasses.
+type EditWindowSource interface {
+	PostEditWindowMinutes() int
+}
 
 var slugRegexp = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
@@ -103,6 +132,11 @@ type Notifier interface {
 		targetType string, targetID int64, targetTitle string)
 	NotifyMention(recipientID, actorID int64, actorUsername string, actorIsAnon bool,
 		targetType string, targetID int64, targetTitle, preview string)
+	// NotifyModerationHidden fires after async AI moderation removes the
+	// author's own content. targetType is "topic" or "post"; reason
+	// carries the moderator's rejection text so the author can see why.
+	NotifyModerationHidden(recipientID int64, targetType string, targetID int64,
+		targetTitle, reason string)
 }
 
 // mentionRegexp matches @username tokens in user-generated content. The
@@ -138,8 +172,10 @@ type Service struct {
 	notifier   Notifier
 	botTrigger BotTrigger
 	credits    CreditsAwarder
-	filter     ContentFilter
-	moderator  Moderator
+	filter       ContentFilter
+	moderator    Moderator
+	editWindow   EditWindowSource
+	botOwnership BotOwnershipChecker
 }
 
 func NewService(repo *Repository, anon AnonAssigner) *Service {
@@ -151,6 +187,137 @@ func (s *Service) SetBotTrigger(b BotTrigger)         { s.botTrigger = b }
 func (s *Service) SetCreditsAwarder(c CreditsAwarder) { s.credits = c }
 func (s *Service) SetContentFilter(f ContentFilter)   { s.filter = f }
 func (s *Service) SetModerator(m Moderator)           { s.moderator = m }
+func (s *Service) SetEditWindow(e EditWindowSource)   { s.editWindow = e }
+func (s *Service) SetBotOwnership(b BotOwnershipChecker) { s.botOwnership = b }
+
+// canEdit decides whether actor (role + id) may edit an entity owned by
+// ownerID that was created at createdAt. Admins / moderators with EditAny
+// bypass the window entirely; owners fall back to PermEditOwn + a time
+// check against the live site setting.
+func (s *Service) canEdit(actorID int64, actorRole string, ownerID int64, createdAt time.Time, permOwn, permAny string) error {
+	if rbac.HasPermission(actorRole, permAny) {
+		return nil
+	}
+	if actorID == 0 || actorID != ownerID {
+		return ErrEditForbidden
+	}
+	if !rbac.HasPermission(actorRole, permOwn) {
+		return ErrEditForbidden
+	}
+	window := 0
+	if s.editWindow != nil {
+		window = s.editWindow.PostEditWindowMinutes()
+	}
+	if window <= 0 {
+		return ErrEditWindowExpired
+	}
+	if time.Since(createdAt) > time.Duration(window)*time.Minute {
+		return ErrEditWindowExpired
+	}
+	return nil
+}
+
+// UpdateTopicBody updates a topic's body after permission + window checks.
+// Returns the updated topic so the handler can echo it back. Moderation and
+// content filter are re-run on the new body.
+func (s *Service) UpdateTopicBody(actorID int64, actorRole string, topicID int64, newBody string) (*Topic, error) {
+	newBody = strings.TrimSpace(newBody)
+	if utf8.RuneCountInString(newBody) < 1 {
+		return nil, ErrInvalidContent
+	}
+	t, err := s.repo.TopicByID(topicID)
+	if err != nil {
+		return nil, err
+	}
+	if t == nil {
+		return nil, ErrTopicNotFound
+	}
+	if err := s.canEdit(actorID, actorRole, t.UserID, t.CreatedAt, rbac.PermTopicEditOwn, rbac.PermTopicEditAny); err != nil {
+		return nil, err
+	}
+	if s.filter != nil {
+		if hits := s.filter.Check(newBody); len(hits) > 0 {
+			for _, h := range hits {
+				if h.Severity == "block" {
+					return nil, ErrContentBlocked
+				}
+			}
+		}
+	}
+	if s.moderator != nil {
+		cat, _ := s.repo.CategoryByID(t.CategoryID)
+		rules := ""
+		if cat != nil {
+			rules = cat.Rules
+		}
+		r := s.moderator.Check(actorID, "topic", newBody, rules)
+		if r.Blocked {
+			suggestion := ""
+			if s.moderator != nil {
+				suggestion = s.moderator.GenerateRewrite(newBody, r.Reason, rules)
+			}
+			return nil, &BlockedError{Reason: r.Reason, Suggestion: suggestion}
+		}
+	}
+	now := time.Now()
+	t.Body = newBody
+	t.Excerpt = truncateRunes(newBody, 200)
+	t.EditedAt = &now
+	if err := s.repo.UpdateTopicBody(t.ID, newBody, t.Excerpt, now); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// UpdatePost updates a reply's content after permission + window checks.
+func (s *Service) UpdatePost(actorID int64, actorRole string, postID int64, newContent string) (*Post, error) {
+	newContent = strings.TrimSpace(newContent)
+	if utf8.RuneCountInString(newContent) < 1 {
+		return nil, ErrInvalidContent
+	}
+	p, err := s.repo.PostByID(postID)
+	if err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, ErrPostNotFound
+	}
+	if err := s.canEdit(actorID, actorRole, p.UserID, p.CreatedAt, rbac.PermReplyEditOwn, rbac.PermReplyEditAny); err != nil {
+		return nil, err
+	}
+	if s.filter != nil {
+		if hits := s.filter.Check(newContent); len(hits) > 0 {
+			for _, h := range hits {
+				if h.Severity == "block" {
+					return nil, ErrContentBlocked
+				}
+			}
+		}
+	}
+	if s.moderator != nil {
+		rules := ""
+		if parent, err := s.repo.TopicByID(p.TopicID); err == nil && parent != nil {
+			if cat, _ := s.repo.CategoryByID(parent.CategoryID); cat != nil {
+				rules = cat.Rules
+			}
+		}
+		r := s.moderator.Check(actorID, "post", newContent, rules)
+		if r.Blocked {
+			suggestion := ""
+			if s.moderator != nil {
+				suggestion = s.moderator.GenerateRewrite(newContent, r.Reason, rules)
+			}
+			return nil, &BlockedError{Reason: r.Reason, Suggestion: suggestion}
+		}
+	}
+	now := time.Now()
+	p.Content = newContent
+	p.EditedAt = &now
+	if err := s.repo.UpdatePostContent(p.ID, newContent, now); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
 
 // ---------- Categories ----------
 
@@ -291,6 +458,12 @@ func (s *Service) DeleteCategory(id int64) error {
 
 func (s *Service) GetTopic(id int64) (*Topic, error) {
 	return s.repo.TopicByID(id)
+}
+
+// GetPost is the public accessor used by admin code to resolve a post's
+// author — e.g. when handling a report against a specific reply.
+func (s *Service) GetPost(id int64) (*Post, error) {
+	return s.repo.PostByID(id)
 }
 
 // FollowedTopics returns the activity feed for the given viewer — recent
@@ -753,6 +926,7 @@ type CreateTopicInput struct {
 	Title        string
 	Body         string
 	IsAnon       bool
+	MinReadLevel int16
 }
 
 func (s *Service) CreateTopic(in CreateTopicInput) (*Topic, error) {
@@ -764,6 +938,29 @@ func (s *Service) CreateTopic(in CreateTopicInput) (*Topic, error) {
 	body := strings.TrimSpace(in.Body)
 	if utf8.RuneCountInString(body) < 2 {
 		return nil, ErrInvalidContent
+	}
+
+	// Read-level gate: the author can only restrict a topic up to their
+	// own level. A sub-L3 user cannot make an L5-only topic and hide it
+	// from everyone including themselves.
+	if in.MinReadLevel < 0 {
+		return nil, ErrInvalidReadLevel
+	}
+	if in.MinReadLevel > 0 {
+		author, err := s.repo.UserRefByID(in.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if author == nil || in.MinReadLevel > author.Level {
+			return nil, ErrInvalidReadLevel
+		}
+	}
+
+	// Dedup: block a rapid double-submit (typically caused by a frantic
+	// double-click before the button disabled). Matches the same author
+	// posting identical title + body within a short window.
+	if dup, _ := s.repo.RecentDuplicateTopic(in.UserID, title, body, duplicateWindow); dup {
+		return nil, ErrDuplicateSubmission
 	}
 
 	if s.filter != nil {
@@ -780,28 +977,39 @@ func (s *Service) CreateTopic(in CreateTopicInput) (*Topic, error) {
 		return nil, err
 	}
 
-	var modLogID int64
-	if s.moderator != nil {
-		mr := s.moderator.Check(in.UserID, "topic", title+"\n\n"+body, c.Rules)
-		if mr.Blocked {
-			suggestion := s.moderator.GenerateRewrite(title+"\n\n"+body, mr.Reason, c.Rules)
-			return nil, &BlockedError{Reason: mr.Reason, Suggestion: suggestion}
+	// Bot-type categories require the author to own at least one active
+	// bot. The rule: you're allowed to publish here only if you have skin
+	// in the game as a bot builder. Regular commentary still works — you
+	// can reply to existing threads without owning a bot.
+	if c.Type == categoryTypeBot {
+		if s.botOwnership == nil {
+			return nil, ErrBotRequired
 		}
-		modLogID = mr.LogID
+		owns, err := s.botOwnership.HasActiveBot(in.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if !owns {
+			return nil, ErrBotRequired
+		}
 	}
 
 	excerpt := truncateRunes(body, 256)
 
-	// Anon boards always force anon. Normal boards honor the flag.
-	isAnon := in.IsAnon || c.Type == "anon"
+	// Anon boards always force anon. Non-anon boards (normal / bot) reject
+	// the anon flag outright — anonymity is a board-level property, not a
+	// per-post opt-in. This keeps the audit model simple: if a topic is
+	// anonymous, its category is anonymous.
+	isAnon := c.Type == "anon"
 
 	t := &Topic{
-		CategoryID: c.ID,
-		UserID:     in.UserID,
-		Title:      title,
-		Body:       body,
-		Excerpt:    excerpt,
-		IsAnon:     isAnon,
+		CategoryID:   c.ID,
+		UserID:       in.UserID,
+		Title:        title,
+		Body:         body,
+		Excerpt:      excerpt,
+		IsAnon:       isAnon,
+		MinReadLevel: in.MinReadLevel,
 	}
 	if err := s.repo.CreateTopic(t); err != nil {
 		return nil, err
@@ -827,11 +1035,44 @@ func (s *Service) CreateTopic(in CreateTopicInput) (*Topic, error) {
 		}
 	}
 
-	if s.moderator != nil && modLogID > 0 {
-		s.moderator.LinkTarget(modLogID, t.ID)
+	// Kick off LLM moderation in the background so the user's POST
+	// returns in milliseconds instead of 3-15s. If the model later
+	// flags the content, asyncModerateTopic soft-deletes the topic
+	// and notifies the author. The cheap sync filter above already
+	// blocked the obvious stuff synchronously.
+	if s.moderator != nil {
+		go s.asyncModerateTopic(t.ID, t.UserID, t.Title, t.Body, c.Rules)
 	}
 
 	return t, nil
+}
+
+// asyncModerateTopic runs the LLM moderator check after CreateTopic
+// returns. It recovers from any panic so a buggy moderator can't take
+// down the server, and records the outcome to the moderation log. On
+// block, the topic is soft-deleted and the author is notified — the
+// suggestion-rewrite flow available in sync mode is dropped because
+// the HTTP response has already left the building.
+func (s *Service) asyncModerateTopic(topicID, authorID int64, title, body, rules string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("async topic moderation panic: topic=%d err=%v", topicID, r)
+		}
+	}()
+	result := s.moderator.Check(authorID, "topic", title+"\n\n"+body, rules)
+	if result.LogID > 0 {
+		s.moderator.LinkTarget(result.LogID, topicID)
+	}
+	if !result.Blocked {
+		return
+	}
+	if err := s.repo.SoftDeleteTopic(topicID); err != nil {
+		log.Printf("async topic moderation: soft-delete topic=%d failed: %v", topicID, err)
+		return
+	}
+	if s.notifier != nil && authorID != 0 {
+		s.notifier.NotifyModerationHidden(authorID, "topic", topicID, title, result.Reason)
+	}
 }
 
 // fanoutMentions resolves @username tokens in content and pushes a mention
@@ -899,6 +1140,13 @@ func (s *Service) CreatePost(in CreatePostInput) (*Post, error) {
 		return nil, ErrInvalidContent
 	}
 
+	// Dedup: block a rapid double-submit from the same author in the same
+	// topic with identical content. Guards against double-click mis-fires
+	// and racey network retries.
+	if dup, _ := s.repo.RecentDuplicatePost(in.UserID, in.TopicID, content, duplicateWindow); dup {
+		return nil, ErrDuplicateSubmission
+	}
+
 	if s.filter != nil {
 		hits := s.filter.Check(content)
 		for _, h := range hits {
@@ -914,21 +1162,6 @@ func (s *Service) CreatePost(in CreatePostInput) (*Post, error) {
 	}
 	if t == nil {
 		return nil, ErrTopicNotFound
-	}
-
-	var modLogID int64
-	if s.moderator != nil {
-		cat, _ := s.repo.CategoryByID(t.CategoryID)
-		rules := ""
-		if cat != nil {
-			rules = cat.Rules
-		}
-		mr := s.moderator.Check(in.UserID, "post", content, rules)
-		if mr.Blocked {
-			suggestion := s.moderator.GenerateRewrite(content, mr.Reason, rules)
-			return nil, &BlockedError{Reason: mr.Reason, Suggestion: suggestion}
-		}
-		modLogID = mr.LogID
 	}
 
 	if t.IsLocked {
@@ -1001,9 +1234,39 @@ func (s *Service) CreatePost(in CreatePostInput) (*Post, error) {
 		}
 	}
 
-	if s.moderator != nil && modLogID > 0 {
-		s.moderator.LinkTarget(modLogID, p.ID)
+	// Async LLM moderation — same pattern as CreateTopic. Filter already
+	// ran sync above; this is the slow content audit path.
+	if s.moderator != nil && !p.IsBotGenerated {
+		cat, _ := s.repo.CategoryByID(t.CategoryID)
+		rules := ""
+		if cat != nil {
+			rules = cat.Rules
+		}
+		go s.asyncModeratePost(p.ID, in.UserID, content, t.Title, rules)
 	}
 
 	return p, nil
+}
+
+// asyncModeratePost is the reply-side twin of asyncModerateTopic.
+func (s *Service) asyncModeratePost(postID, authorID int64, content, topicTitle, rules string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("async post moderation panic: post=%d err=%v", postID, r)
+		}
+	}()
+	result := s.moderator.Check(authorID, "post", content, rules)
+	if result.LogID > 0 {
+		s.moderator.LinkTarget(result.LogID, postID)
+	}
+	if !result.Blocked {
+		return
+	}
+	if err := s.repo.SoftDeletePost(postID); err != nil {
+		log.Printf("async post moderation: soft-delete post=%d failed: %v", postID, err)
+		return
+	}
+	if s.notifier != nil && authorID != 0 {
+		s.notifier.NotifyModerationHidden(authorID, "post", postID, topicTitle, result.Reason)
+	}
 }

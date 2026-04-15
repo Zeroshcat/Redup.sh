@@ -27,6 +27,7 @@ const (
 	KeyAnon         = "site.anon"
 	KeyCredits      = "site.credits"
 	KeyModeration   = "site.moderation"
+	KeyLLM          = "site.llm"
 )
 
 // Typed structs for each group. These define the canonical shape persisted
@@ -40,6 +41,20 @@ type Basic struct {
 	ContactEmail string `json:"contact_email,omitempty"`
 	Language     string `json:"language"`
 	Timezone     string `json:"timezone"`
+
+	// PostEditWindowMinutes is how long after publish an author can still
+	// edit their own topic body or reply. 0 disables the window (only admins
+	// / moderators with PermEditAny can edit). Admins are never gated.
+	PostEditWindowMinutes int `json:"post_edit_window_minutes"`
+
+	// OutboundProxyURL is an optional HTTP(S) / SOCKS5 proxy used for
+	// platform-initiated outbound calls (currently bot webhook delivery).
+	// When set, the bot webhook client routes all POSTs to user bots
+	// through this proxy — useful for hiding the real server IP from bot
+	// operators' access logs or escaping restrictive egress networks.
+	// Formats: http://host:port, https://host:port, socks5://host:port
+	// Empty string disables the proxy.
+	OutboundProxyURL string `json:"outbound_proxy_url,omitempty"`
 }
 
 type Registration struct {
@@ -124,6 +139,40 @@ type Credits struct {
 	TranslationProvider   string `json:"translation_provider"`
 	TranslationModel      string `json:"translation_model"`
 }
+
+// LLM is the admin-managed list of upstream model providers. Each entry is
+// a self-contained endpoint the platform can dispatch Complete() calls to:
+// credentials, base URL, supported models, and a stable ID that other
+// settings (moderation.provider, credits.translation_provider, etc.)
+// reference by string. Storing these in site_settings means an admin can
+// add a new provider — including any OpenAI-compatible third party like
+// DeepSeek, Moonshot, local Ollama — from the admin panel without
+// redeploying the backend or editing .env files.
+type LLM struct {
+	Providers []LLMProvider `json:"providers"`
+}
+
+// LLMProvider describes one configurable upstream. The Kind field selects
+// the HTTP client implementation in the llm package:
+//   - "openai" — OpenAI's /chat/completions shape; also covers every
+//     OpenAI-compatible endpoint (DeepSeek, Moonshot, Ollama with
+//     OpenAI mode, vLLM, LM Studio, etc.). Custom base URL supported.
+//   - "anthropic" — Anthropic's /messages shape with the x-api-key header.
+type LLMProvider struct {
+	ID       string   `json:"id"`               // stable key used by moderation.provider / credits.translation_provider
+	Name     string   `json:"name"`             // display name for admin dropdowns
+	Kind     string   `json:"kind"`             // "openai" | "anthropic"
+	BaseURL  string   `json:"base_url"`         // e.g. https://api.deepseek.com/v1
+	APIKey   string   `json:"api_key"`          // raw key, filtered out of public snapshots
+	Enabled  bool     `json:"enabled"`          // disabled providers are kept on the list but never dispatched
+	Models   []string `json:"models,omitempty"` // suggested models for the UI dropdown; not enforced server-side
+	Note     string   `json:"note,omitempty"`   // free-form note for the admin
+}
+
+const (
+	LLMKindOpenAI    = "openai"
+	LLMKindAnthropic = "anthropic"
+)
 
 // Moderation is the LLM-based content audit config. Reads site.rules at call
 // time as the rule baseline, then asks the model to judge new posts against

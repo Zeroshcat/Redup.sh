@@ -7,13 +7,17 @@ import {
   saveSiteBasic,
   saveSiteCredits,
   saveSiteFooter,
+  saveSiteLLM,
   saveSiteModeration,
   saveSiteRegistration,
   saveSiteRules,
   saveSiteSEO,
+  type LLMProviderKind,
   type SiteBasic,
   type SiteCredits,
   type SiteFooter,
+  type SiteLLM,
+  type SiteLLMProvider,
   type SiteModeration,
   type SiteRegistration,
   type SiteRules,
@@ -22,7 +26,15 @@ import {
 } from "@/lib/api/site";
 import { APIError } from "@/lib/api-client";
 
-type Section = "basic" | "registration" | "seo" | "rules" | "footer" | "credits" | "moderation";
+type Section =
+  | "basic"
+  | "registration"
+  | "seo"
+  | "rules"
+  | "footer"
+  | "credits"
+  | "moderation"
+  | "llm";
 
 const SECTIONS: { key: Section; label: string; icon: string }[] = [
   { key: "basic", label: "基本信息", icon: "📄" },
@@ -32,6 +44,7 @@ const SECTIONS: { key: Section; label: string; icon: string }[] = [
   { key: "footer", label: "页脚与备案", icon: "🧾" },
   { key: "credits", label: "积分与等级", icon: "✦" },
   { key: "moderation", label: "AI 审核", icon: "🛡" },
+  { key: "llm", label: "LLM 提供方", icon: "🧠" },
 ];
 
 export default function AdminSitePage() {
@@ -122,13 +135,21 @@ export default function AdminSitePage() {
               {active === "credits" && (
                 <CreditsSection
                   value={snapshot.credits}
+                  providers={snapshot.llm.providers ?? []}
                   onSaved={(v) => setSnapshot({ ...snapshot, credits: v })}
                 />
               )}
               {active === "moderation" && (
                 <ModerationSection
                   value={snapshot.moderation}
+                  providers={snapshot.llm.providers ?? []}
                   onSaved={(v) => setSnapshot({ ...snapshot, moderation: v })}
+                />
+              )}
+              {active === "llm" && (
+                <LLMSection
+                  value={snapshot.llm}
+                  onSaved={(v) => setSnapshot({ ...snapshot, llm: v })}
                 />
               )}
             </>
@@ -387,6 +408,40 @@ function BasicSection({ value, onSaved }: { value: SiteBasic; onSaved: (v: SiteB
           <option value="UTC">UTC</option>
           <option value="America/Los_Angeles">America/Los_Angeles (UTC-8)</option>
         </select>
+      </Field>
+
+      <Field label="帖子编辑窗口（分钟）">
+        <input
+          type="number"
+          min={0}
+          value={s.value.post_edit_window_minutes ?? 0}
+          onChange={(e) =>
+            s.setValue({
+              ...s.value,
+              post_edit_window_minutes: Math.max(0, Number(e.target.value) || 0),
+            })
+          }
+          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+        />
+        <p className="mt-1 text-xs text-muted-foreground">
+          发布后的 N 分钟内，作者可修改自己的帖子或回复。0 表示关闭作者自编辑，仅管理员 / 版主可改。
+        </p>
+      </Field>
+
+      <Field label="出站代理 URL">
+        <input
+          type="text"
+          value={s.value.outbound_proxy_url ?? ""}
+          onChange={(e) =>
+            s.setValue({ ...s.value, outbound_proxy_url: e.target.value })
+          }
+          placeholder="http://host:port / https://host:port / socks5://host:port"
+          className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm outline-none focus:border-ring"
+        />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Bot Webhook 投递走此代理出站 —— 可用于隐藏服务器源 IP 或穿越出站限制。
+          留空即直连。改动保存后立即生效，无需重启。
+        </p>
       </Field>
 
       <SaveBar onSave={s.onSave} onReset={s.onReset} loading={s.loading} error={s.error} saved={s.saved} />
@@ -697,9 +752,11 @@ function FooterSection({ value, onSaved }: { value: SiteFooter; onSaved: (v: Sit
 
 function CreditsSection({
   value,
+  providers,
   onSaved,
 }: {
   value: SiteCredits;
+  providers: SiteLLMProvider[];
   onSaved: (v: SiteCredits) => void;
 }) {
   const s = useSaveState(value, saveSiteCredits, onSaved);
@@ -848,24 +905,15 @@ function CreditsSection({
             onChange={(e) => set({ translation_cost: Number(e.target.value) })}
           />
         </Field>
-        <Field label="LLM 提供方" hint="必须在 .env 配置了对应的 API key">
-          <select
-            value={v.translation_provider}
-            onChange={(e) => set({ translation_provider: e.target.value })}
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-          >
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-          </select>
-        </Field>
-        <Field label="模型名">
-          <Input
-            value={v.translation_model}
-            onChange={(e) => set({ translation_model: e.target.value })}
-            placeholder="gpt-4o-mini / claude-haiku-4-5"
-            className="font-mono"
-          />
-        </Field>
+        <ProviderPicker
+          label="LLM 提供方"
+          providers={providers}
+          providerID={v.translation_provider}
+          model={v.translation_model}
+          onChange={(provider, model) =>
+            set({ translation_provider: provider, translation_model: model })
+          }
+        />
       </div>
 
       <SaveBar onSave={s.onSave} onReset={s.onReset} loading={s.loading} error={s.error} saved={s.saved} />
@@ -918,9 +966,11 @@ function RewardRow({
 
 function ModerationSection({
   value,
+  providers,
   onSaved,
 }: {
   value: SiteModeration;
+  providers: SiteLLMProvider[];
   onSaved: (v: SiteModeration) => void;
 }) {
   const s = useSaveState(value, saveSiteModeration, onSaved);
@@ -956,24 +1006,13 @@ function ModerationSection({
       </div>
 
       <div className="mt-5 grid gap-4 md:grid-cols-2">
-        <Field label="LLM 提供方" hint="必须在 .env 配置了对应的 API key">
-          <select
-            value={v.provider}
-            onChange={(e) => set({ provider: e.target.value })}
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-          >
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-          </select>
-        </Field>
-        <Field label="模型名">
-          <Input
-            value={v.model}
-            onChange={(e) => set({ model: e.target.value })}
-            placeholder="gpt-4o-mini / claude-haiku-4-5"
-            className="font-mono"
-          />
-        </Field>
+        <ProviderPicker
+          label="LLM 提供方"
+          providers={providers}
+          providerID={v.provider}
+          model={v.model}
+          onChange={(provider, model) => set({ provider, model })}
+        />
       </div>
 
       <div className="mt-5">
@@ -996,6 +1035,356 @@ function ModerationSection({
       </div>
 
       <SaveBar onSave={s.onSave} onReset={s.onReset} loading={s.loading} error={s.error} saved={s.saved} />
+    </div>
+  );
+}
+
+/* ---------- Provider picker (shared) ---------- */
+
+// ProviderPicker renders a two-column control: provider dropdown +
+// model dropdown. The model column auto-switches between a <select>
+// (when the chosen provider advertises a suggested models list) and a
+// plain text input (free-form when the list is empty or "other") so
+// admins can still type custom model names for providers that don't
+// pre-declare them.
+//
+// When no enabled providers exist we show a prominent empty state
+// linking admins to the LLM 提供方 tab — no more "type openai and
+// pray .env has the key" guesswork.
+function ProviderPicker({
+  label,
+  providers,
+  providerID,
+  model,
+  onChange,
+}: {
+  label: string;
+  providers: SiteLLMProvider[];
+  providerID: string;
+  model: string;
+  onChange: (providerID: string, model: string) => void;
+}) {
+  const enabled = providers.filter((p) => p.enabled);
+  const current = enabled.find((p) => p.id === providerID);
+  const models = current?.models ?? [];
+  const hasSuggestions = models.length > 0;
+
+  if (enabled.length === 0) {
+    return (
+      <div className="md:col-span-2">
+        <label className="mb-1.5 block text-xs font-medium text-foreground">{label}</label>
+        <div className="rounded-md border border-dashed border-amber-500/40 bg-amber-500/5 p-4 text-xs text-amber-700 dark:text-amber-300">
+          还没有启用的 LLM 提供方。请先在「LLM 提供方」标签页添加一个后再来这里选择。
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <Field label={label} hint="从下方「LLM 提供方」标签页配置的列表中选一个">
+        <select
+          value={providerID}
+          onChange={(e) => {
+            const pid = e.target.value;
+            // Reset model when provider changes to avoid stale refs.
+            const next = providers.find((p) => p.id === pid);
+            const fallback = next?.models?.[0] ?? "";
+            onChange(pid, fallback || model);
+          }}
+          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+        >
+          {/* Keep the current value visible even if the provider was
+              deleted or disabled, so admins notice and can fix it. */}
+          {providerID && !current && (
+            <option value={providerID} className="text-rose-500">
+              {providerID}（未找到或已停用）
+            </option>
+          )}
+          {!providerID && <option value="">— 选择提供方 —</option>}
+          {enabled.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} · {p.id}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="模型名" hint={hasSuggestions ? "从提供方建议的模型中选择" : "自由输入"}>
+        {hasSuggestions ? (
+          <select
+            value={model}
+            onChange={(e) => onChange(providerID, e.target.value)}
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring font-mono"
+          >
+            {model && !models.includes(model) && (
+              <option value={model}>{model}（自定义）</option>
+            )}
+            {models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <Input
+            value={model}
+            onChange={(e) => onChange(providerID, e.target.value)}
+            placeholder="model-name"
+            className="font-mono"
+          />
+        )}
+      </Field>
+    </>
+  );
+}
+
+/* ---------- LLM ---------- */
+
+const KIND_OPTIONS: { value: LLMProviderKind; label: string; hint: string }[] = [
+  {
+    value: "openai",
+    label: "OpenAI 兼容",
+    hint: "任何走 /chat/completions 接口的提供方，比如 OpenAI、DeepSeek、Moonshot、本地 Ollama、vLLM、LM Studio 等",
+  },
+  {
+    value: "anthropic",
+    label: "Anthropic",
+    hint: "Anthropic 原生 /messages 接口，带 x-api-key 头",
+  },
+];
+
+function emptyProvider(): SiteLLMProvider {
+  return {
+    id: "",
+    name: "",
+    kind: "openai",
+    base_url: "https://api.openai.com/v1",
+    api_key: "",
+    enabled: true,
+    models: [],
+    note: "",
+  };
+}
+
+function LLMSection({
+  value,
+  onSaved,
+}: {
+  value: SiteLLM;
+  onSaved: (v: SiteLLM) => void;
+}) {
+  const [providers, setProviders] = useState<SiteLLMProvider[]>(value.providers ?? []);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  // Re-sync when the parent snapshot updates (e.g. after save).
+  useEffect(() => {
+    setProviders(value.providers ?? []);
+  }, [value]);
+
+  function update(i: number, patch: Partial<SiteLLMProvider>) {
+    setProviders((list) => list.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
+  }
+
+  function addProvider() {
+    setProviders((list) => [...list, emptyProvider()]);
+  }
+
+  function removeProvider(i: number) {
+    if (!confirm("确定移除该提供方？已经在使用它的功能会立即失败。")) return;
+    setProviders((list) => list.filter((_, idx) => idx !== i));
+  }
+
+  async function save() {
+    setLoading(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const resp = await saveSiteLLM({ providers });
+      setProviders(resp.providers ?? []);
+      onSaved(resp);
+      setSaved(true);
+    } catch (err) {
+      if (err instanceof APIError) {
+        setError(`${err.message} (req ${err.requestId})`);
+      } else {
+        setError("保存失败");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div>
+      <SectionHeader
+        title="LLM 提供方"
+        desc="配置翻译、AI 审核、Bot 网关等官方功能所使用的上游模型服务。支持任意 OpenAI 兼容端点（DeepSeek、Moonshot、本地 Ollama、vLLM 等）和 Anthropic 原生接口。"
+      />
+
+      <div className="mb-4 rounded-md border border-blue-500/30 bg-blue-500/5 p-3 text-[11px] text-blue-700 dark:text-blue-300">
+        ℹ 保存后路由器会立即热更新，无需重启后端。<br />
+        ℹ API Key 在列表中以 <code className="font-mono">••••••••</code> 显示，留空或保持星号表示「沿用已有的 Key」，只有输入新值才会替换。<br />
+        ℹ 禁用的提供方仍保留配置但不会被调用，方便后续启停。
+      </div>
+
+      {providers.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
+          还没有任何 LLM 提供方。<br />
+          点击下方「新增提供方」配置第一个。
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {providers.map((p, i) => (
+            <div key={i} className="rounded-lg border border-border bg-card p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                    #{i + 1}
+                  </span>
+                  {p.enabled ? (
+                    <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                      启用
+                    </span>
+                  ) : (
+                    <span className="rounded bg-zinc-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-600 dark:text-zinc-400">
+                      停用
+                    </span>
+                  )}
+                  <span className="text-[11px] text-muted-foreground">
+                    {KIND_OPTIONS.find((k) => k.value === p.kind)?.label}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeProvider(i)}
+                  className="rounded-md border border-rose-500/30 px-2 py-1 text-[11px] font-medium text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+                >
+                  移除
+                </button>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <Field
+                  label="ID"
+                  hint="稳定的字符串主键，被 AI 审核 / 翻译的 provider 字段引用。一经使用不建议修改。"
+                >
+                  <Input
+                    value={p.id}
+                    onChange={(e) => update(i, { id: e.target.value })}
+                    placeholder="e.g. openai-main / deepseek / local"
+                  />
+                </Field>
+                <Field label="显示名">
+                  <Input
+                    value={p.name}
+                    onChange={(e) => update(i, { name: e.target.value })}
+                    placeholder="e.g. DeepSeek"
+                  />
+                </Field>
+                <Field label="类型">
+                  <select
+                    value={p.kind}
+                    onChange={(e) => update(i, { kind: e.target.value as LLMProviderKind })}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                  >
+                    {KIND_OPTIONS.map((k) => (
+                      <option key={k.value} value={k.value}>
+                        {k.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    {KIND_OPTIONS.find((k) => k.value === p.kind)?.hint}
+                  </p>
+                </Field>
+                <Field label="Base URL">
+                  <Input
+                    value={p.base_url}
+                    onChange={(e) => update(i, { base_url: e.target.value })}
+                    placeholder={
+                      p.kind === "anthropic"
+                        ? "https://api.anthropic.com/v1"
+                        : "https://api.deepseek.com/v1"
+                    }
+                  />
+                </Field>
+                <Field
+                  label="API Key"
+                  hint="留空 / 保持星号 = 沿用已有 Key；输入新值则替换"
+                >
+                  <Input
+                    type="password"
+                    value={p.api_key}
+                    onChange={(e) => update(i, { api_key: e.target.value })}
+                    placeholder="sk-..."
+                    autoComplete="off"
+                  />
+                </Field>
+                <Field
+                  label="支持模型"
+                  hint="英文逗号分隔，用于 UI 下拉提示（不做后端强校验）"
+                >
+                  <Input
+                    value={(p.models ?? []).join(", ")}
+                    onChange={(e) =>
+                      update(i, {
+                        models: e.target.value
+                          .split(",")
+                          .map((s) => s.trim())
+                          .filter(Boolean),
+                      })
+                    }
+                    placeholder="gpt-4o, gpt-4o-mini"
+                  />
+                </Field>
+                <Field label="备注（可选）">
+                  <Input
+                    value={p.note ?? ""}
+                    onChange={(e) => update(i, { note: e.target.value })}
+                    placeholder="任意备注"
+                  />
+                </Field>
+                <Field label="启用状态">
+                  <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={p.enabled}
+                      onChange={(e) => update(i, { enabled: e.target.checked })}
+                      className="h-4 w-4"
+                    />
+                    <span className="text-foreground">启用此提供方</span>
+                  </label>
+                </Field>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-4 flex">
+        <button
+          type="button"
+          onClick={addProvider}
+          className="rounded-md border border-dashed border-border bg-card px-4 py-2 text-sm font-medium text-muted-foreground hover:border-primary/40 hover:text-foreground"
+        >
+          + 新增提供方
+        </button>
+      </div>
+
+      <SaveBar
+        onSave={save}
+        onReset={() => setProviders(value.providers ?? [])}
+        loading={loading}
+        error={error}
+        saved={saved}
+      />
+
+      <div className="mt-4 text-[11px] text-muted-foreground">
+        配置完成后，在「AI 审核」和「积分与等级 → 翻译」中把 provider 字段填成上面的 ID
+        即可让对应功能调用你配置的上游模型。
+      </div>
     </div>
   );
 }

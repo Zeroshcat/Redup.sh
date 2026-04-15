@@ -1,9 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toggleTopicLike, togglePostLike } from "@/lib/api/forum";
 import { APIError } from "@/lib/api-client";
+import type { LikeStateDetail } from "./TopicStateHydrator";
 import { useAuthStore } from "@/store/auth";
 
 type Target = "topic" | "post";
@@ -27,6 +28,18 @@ export function LikeButton({
   const [liked, setLiked] = useState(initialLiked);
   const [count, setCount] = useState(initialCount);
   const [loading, setLoading] = useState(false);
+
+  // Listen for TopicStateHydrator's post-mount broadcast: the SSR path
+  // doesn't see the user's token, so initialLiked is unreliable for
+  // logged-in users. Adopt whatever the authed re-fetch returns.
+  useEffect(() => {
+    function onLikeState(e: Event) {
+      const d = (e as CustomEvent<LikeStateDetail>).detail;
+      if (d.target === target && d.id === id) setLiked(d.liked);
+    }
+    window.addEventListener("redup:like-state", onLikeState);
+    return () => window.removeEventListener("redup:like-state", onLikeState);
+  }, [target, id]);
 
   async function onClick() {
     if (!user) {

@@ -28,6 +28,7 @@ export function adaptTopic(t: ServerTopic): Topic {
     id: t.id,
     categoryId: t.category_id,
     categorySlug: t.category_slug ?? "",
+    categoryName: t.category_name,
     title: t.title,
     excerpt: t.excerpt ?? "",
     body: t.body,
@@ -49,6 +50,8 @@ export function adaptTopic(t: ServerTopic): Topic {
     likeCount: t.like_count,
     viewCount: t.view_count,
     createdAt: t.created_at,
+    editedAt: t.edited_at,
+    minReadLevel: t.min_read_level,
     lastPostAt: t.last_post_at,
     pinLevel: t.pin_level,
     pinWeight: t.pin_weight,
@@ -101,6 +104,7 @@ export function adaptPost(p: ServerPost): Post {
     author,
     likeCount: p.like_count,
     createdAt: p.created_at,
+    editedAt: p.edited_at,
     parentId: p.parent_id,
     replyTo:
       p.reply_to_floor !== undefined && p.reply_to_floor !== null

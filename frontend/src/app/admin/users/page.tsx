@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { AdminHeader } from "@/components/admin/AdminHeader";
 import { APIError } from "@/lib/api-client";
 import {
+  adminAdjustCreditScore,
   adminBanUser,
   adminListUsers,
   adminUnbanUser,
@@ -63,6 +64,35 @@ export default function AdminUsersPage() {
   function applySearch(e: React.FormEvent) {
     e.preventDefault();
     setQuery(searchInput.trim());
+  }
+
+  async function adjustCreditScore(u: ServerPublicUser) {
+    const raw = prompt(
+      `调整 @${u.username} 的信用分\n当前：${u.credit_score} / 100\n请输入有符号的调整值（负数扣分，正数加分）`,
+      "-10",
+    );
+    if (raw === null) return;
+    const delta = Number(raw.trim());
+    if (!Number.isFinite(delta) || delta === 0) {
+      setError("请输入一个非零整数");
+      return;
+    }
+    const reason = prompt("备注（可选，会写入审计日志）", "") ?? "";
+    setBusyId(u.id);
+    setError(null);
+    try {
+      const r = await adminAdjustCreditScore(u.id, Math.trunc(delta), reason);
+      // Patch the row in place so the admin sees the new score immediately.
+      setUsers((prev) =>
+        prev?.map((x) =>
+          x.id === r.user_id ? { ...x, credit_score: r.credit_score } : x,
+        ) ?? null,
+      );
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
   }
 
   async function toggleBan(u: ServerPublicUser) {
@@ -219,6 +249,14 @@ export default function AdminUsersPage() {
                           >
                             详情
                           </Link>
+                          <button
+                            type="button"
+                            onClick={() => adjustCreditScore(u)}
+                            disabled={busyId === u.id}
+                            className="rounded px-2 py-1 text-[11px] text-amber-600 hover:bg-amber-500/10 disabled:opacity-40 disabled:hover:bg-transparent dark:text-amber-400"
+                          >
+                            信用 ±
+                          </button>
                           <button
                             type="button"
                             onClick={() => toggleBan(u)}

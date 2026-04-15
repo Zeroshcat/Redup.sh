@@ -184,11 +184,14 @@ func (r *Repository) fillCategorySlugs(items []Topic) ([]Topic, error) {
 		return nil, err
 	}
 	slugs := make(map[int64]string, len(cats))
+	names := make(map[int64]string, len(cats))
 	for _, c := range cats {
 		slugs[c.ID] = c.Slug
+		names[c.ID] = c.Name
 	}
 	for i := range items {
 		items[i].CategorySlug = slugs[items[i].CategoryID]
+		items[i].CategoryName = names[items[i].CategoryID]
 	}
 	return items, nil
 }
@@ -204,6 +207,7 @@ func (r *Repository) TopicByID(id int64) (*Topic, error) {
 	}
 	if cat, err := r.CategoryByID(t.CategoryID); err == nil && cat != nil {
 		t.CategorySlug = cat.Slug
+		t.CategoryName = cat.Name
 	}
 	return &t, nil
 }
@@ -261,6 +265,60 @@ func (r *Repository) PostByID(id int64) (*Post, error) {
 		return nil, err
 	}
 	return &p, nil
+}
+
+// RecentDuplicateTopic returns true if the given user already posted a
+// topic with the exact same title+body inside the window. Used as a
+// cheap server-side double-submit guard — the check runs against the
+// primary index on user_id + recent timestamps.
+func (r *Repository) RecentDuplicateTopic(userID int64, title, body string, window time.Duration) (bool, error) {
+	if userID == 0 {
+		return false, nil
+	}
+	since := time.Now().Add(-window)
+	var count int64
+	err := r.db.Model(&Topic{}).
+		Where("user_id = ? AND title = ? AND body = ? AND created_at >= ? AND deleted_at IS NULL",
+			userID, title, body, since).
+		Count(&count).Error
+	return count > 0, err
+}
+
+// RecentDuplicatePost returns true if the given user already posted an
+// identical reply in the same topic inside the window.
+func (r *Repository) RecentDuplicatePost(userID, topicID int64, content string, window time.Duration) (bool, error) {
+	if userID == 0 {
+		return false, nil
+	}
+	since := time.Now().Add(-window)
+	var count int64
+	err := r.db.Model(&Post{}).
+		Where("user_id = ? AND topic_id = ? AND content = ? AND created_at >= ? AND deleted_at IS NULL",
+			userID, topicID, content, since).
+		Count(&count).Error
+	return count > 0, err
+}
+
+// UpdateTopicBody rewrites a topic's body/excerpt and stamps edited_at.
+// Scoped to non-deleted rows so a concurrent soft-delete can't resurrect one.
+func (r *Repository) UpdateTopicBody(id int64, body, excerpt string, editedAt time.Time) error {
+	return r.db.Model(&Topic{}).
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(map[string]any{
+			"body":      body,
+			"excerpt":   excerpt,
+			"edited_at": editedAt,
+		}).Error
+}
+
+// UpdatePostContent rewrites a reply's content and stamps edited_at.
+func (r *Repository) UpdatePostContent(id int64, content string, editedAt time.Time) error {
+	return r.db.Model(&Post{}).
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(map[string]any{
+			"content":   content,
+			"edited_at": editedAt,
+		}).Error
 }
 
 func (r *Repository) SoftDeletePost(id int64) error {

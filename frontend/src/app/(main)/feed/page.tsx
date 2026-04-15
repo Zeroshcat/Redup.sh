@@ -87,7 +87,7 @@ export default function FeedPage() {
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
           {topics?.map((t) => <TopicCard key={t.id} topic={t} />)}
         </div>
       )}

@@ -87,14 +87,14 @@ export function CreateBotButton() {
 
       {open && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center"
           onClick={() => !busy && close()}
         >
           <div
-            className="w-full max-w-lg rounded-xl border border-border bg-card p-6 shadow-xl"
+            className="flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col rounded-xl border border-border bg-card shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mb-4 flex items-center justify-between">
+            <div className="flex shrink-0 items-center justify-between border-b border-border px-6 py-4">
               <h3 className="text-base font-semibold text-foreground">创建 Bot 申请</h3>
               <button
                 type="button"
@@ -106,12 +106,13 @@ export function CreateBotButton() {
               </button>
             </div>
 
-            <p className="mb-4 rounded-md border border-violet-500/30 bg-violet-500/5 px-3 py-2 text-[11px] text-violet-700 dark:text-violet-300">
-              ℹ 你的 Bot 是自托管的：触发时 Redup 会向你的 Webhook URL 发送 JSON 事件，你的服务返回 <code className="font-mono">{`{ reply: "..." }`}</code>。
-              支持任意语言、任意模型，由你自己买单。
-            </p>
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              <p className="mb-4 rounded-md border border-violet-500/30 bg-violet-500/5 px-3 py-2 text-[11px] text-violet-700 dark:text-violet-300">
+                ℹ 你的 Bot 是自托管的：触发时 Redup 会向你的 Webhook URL 发送 JSON 事件，你的服务返回 <code className="font-mono">{`{ reply: "..." }`}</code>。
+                支持任意语言、任意模型，由你自己买单。
+              </p>
 
-            <div className="space-y-3">
+              <div className="space-y-3">
               <div className="grid gap-3 md:grid-cols-2">
                 <Field label="Slug" hint="3-32 位小写字母、数字或短横线">
                   <input
@@ -195,15 +196,16 @@ export function CreateBotButton() {
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
                 />
               </Field>
+              </div>
+
+              {error && (
+                <div className="mt-3 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">
+                  {error}
+                </div>
+              )}
             </div>
 
-            {error && (
-              <div className="mt-3 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">
-                {error}
-              </div>
-            )}
-
-            <div className="mt-5 flex justify-end gap-2 border-t border-border pt-4">
+            <div className="flex shrink-0 justify-end gap-2 border-t border-border px-6 py-3">
               <button
                 type="button"
                 onClick={close}

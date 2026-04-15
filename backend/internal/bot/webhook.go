@@ -7,9 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/net/proxy"
 )
 
 // WebhookClient is the narrow interface used to deliver an event to a user
@@ -48,15 +53,66 @@ type WebhookReply struct {
 
 // HTTPWebhookClient is the default implementation: POST JSON, optional
 // Authorization: Bearer <api_key> header, parse `{reply}`.
+//
+// Supports hot-swapping an outbound proxy at runtime via SetProxy — admins
+// can flip between direct / HTTP / HTTPS / SOCKS5 egress without a restart.
 type HTTPWebhookClient struct {
-	HTTP *http.Client
+	mu      sync.RWMutex
+	HTTP    *http.Client
+	timeout time.Duration
 }
 
 func NewHTTPWebhookClient(timeout time.Duration) *HTTPWebhookClient {
 	if timeout <= 0 {
 		timeout = 15 * time.Second
 	}
-	return &HTTPWebhookClient{HTTP: &http.Client{Timeout: timeout}}
+	return &HTTPWebhookClient{
+		HTTP:    &http.Client{Timeout: timeout},
+		timeout: timeout,
+	}
+}
+
+// SetProxy replaces the underlying http.Client with one that routes
+// outbound requests through the given proxy URL. Empty string disables
+// the proxy and reverts to a direct client. Returns an error if the URL
+// is malformed or uses an unsupported scheme.
+//
+// Supported schemes:
+//   - http:// / https:// — CONNECT tunnel via net/http's standard proxy
+//   - socks5:// / socks5h:// — net/proxy dialer wrapped into a Transport
+func (c *HTTPWebhookClient) SetProxy(proxyURL string) error {
+	proxyURL = strings.TrimSpace(proxyURL)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if proxyURL == "" {
+		c.HTTP = &http.Client{Timeout: c.timeout}
+		return nil
+	}
+
+	u, err := url.Parse(proxyURL)
+	if err != nil {
+		return fmt.Errorf("invalid proxy url: %w", err)
+	}
+
+	tr := &http.Transport{}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		tr.Proxy = http.ProxyURL(u)
+	case "socks5", "socks5h":
+		dialer, err := proxy.FromURL(u, proxy.Direct)
+		if err != nil {
+			return fmt.Errorf("socks5 dialer: %w", err)
+		}
+		tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.Dial(network, addr)
+		}
+	default:
+		return fmt.Errorf("unsupported proxy scheme: %s", u.Scheme)
+	}
+
+	c.HTTP = &http.Client{Timeout: c.timeout, Transport: tr}
+	return nil
 }
 
 func (c *HTTPWebhookClient) Deliver(ctx context.Context, webhookURL, apiKey string, payload WebhookPayload) (string, error) {
@@ -76,7 +132,10 @@ func (c *HTTPWebhookClient) Deliver(ctx context.Context, webhookURL, apiKey stri
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	res, err := c.HTTP.Do(req)
+	c.mu.RLock()
+	client := c.HTTP
+	c.mu.RUnlock()
+	res, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}

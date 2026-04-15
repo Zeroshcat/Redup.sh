@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository struct {
@@ -91,6 +92,54 @@ func (r *Repository) FindByEmail(email string) (*User, error) {
 func (r *Repository) UpdateStatus(id int64, status string) error {
 	return r.db.Model(&User{}).Where("id = ?", id).
 		UpdateColumn("status", status).Error
+}
+
+// AdjustCreditScore atomically applies a delta to a user's credit_score,
+// clamping the result to [0, 100]. Returns the new value. Used by admin
+// moderation paths — the delta can be negative (penalty) or positive
+// (restoration after appeal).
+func (r *Repository) AdjustCreditScore(id int64, delta int) (int, error) {
+	var u User
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&u, id).Error; err != nil {
+			return err
+		}
+		next := u.CreditScore + delta
+		if next < 0 {
+			next = 0
+		}
+		if next > 100 {
+			next = 100
+		}
+		u.CreditScore = next
+		return tx.Model(&User{}).Where("id = ?", id).
+			UpdateColumn("credit_score", next).Error
+	})
+	if err != nil {
+		return 0, err
+	}
+	return u.CreditScore, nil
+}
+
+// UpdateProfile writes the editable self-service profile fields. Only
+// fields listed here are touched; username / email / role / status /
+// balances stay untouched so a hostile client can't escalate via
+// profile PUT.
+func (r *Repository) UpdateProfile(id int64, avatarURL, bio, location, website string) error {
+	return r.db.Model(&User{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"avatar_url": avatarURL,
+		"bio":        bio,
+		"location":   location,
+		"website":    website,
+	}).Error
+}
+
+// UpdatePasswordHash replaces the stored bcrypt hash. Caller must have
+// already verified the old password and generated the new hash.
+func (r *Repository) UpdatePasswordHash(id int64, newHash string) error {
+	return r.db.Model(&User{}).Where("id = ?", id).
+		UpdateColumn("password_hash", newHash).Error
 }
 
 type ListOptions struct {

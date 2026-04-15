@@ -14,6 +14,15 @@ type Service struct {
 	// Optional callback fired when site.anon.prefix changes. Lets the anon
 	// module hot-update its runtime generator without a server restart.
 	onAnonPrefixChange func(string)
+
+	// Optional callback fired when site.llm providers change. Main wires
+	// this to rebuild the llm.Router's client map so admin edits take
+	// effect on the next API call rather than on the next restart.
+	onLLMChange func(LLM)
+
+	// Optional callback fired when site.basic is saved. Main wires this
+	// to hot-reload the bot webhook proxy URL without a restart.
+	onBasicChange func(Basic)
 }
 
 func NewService(repo *Repository) *Service {
@@ -24,6 +33,19 @@ func NewService(repo *Repository) *Service {
 // saved. Main wires this to anonSvc.SetPrefix.
 func (s *Service) OnAnonPrefixChange(fn func(prefix string)) {
 	s.onAnonPrefixChange = fn
+}
+
+// OnLLMChange registers a callback invoked whenever the llm providers
+// list is saved. Main wires this to rebuild llm.Router's client map.
+func (s *Service) OnLLMChange(fn func(LLM)) {
+	s.onLLMChange = fn
+}
+
+// OnBasicChange registers a callback invoked whenever the basic group is
+// saved. Main wires this to push the new OutboundProxyURL into the bot
+// webhook client without a server restart.
+func (s *Service) OnBasicChange(fn func(Basic)) {
+	s.onBasicChange = fn
 }
 
 // ---------- Seeds ----------
@@ -42,6 +64,7 @@ func (s *Service) SeedDefaults() error {
 		{KeyAnon, defaultAnon()},
 		{KeyCredits, defaultCredits()},
 		{KeyModeration, defaultModeration()},
+		{KeyLLM, defaultLLM()},
 	} {
 		raw, err := s.repo.Get(pair.key)
 		if err != nil {
@@ -62,8 +85,9 @@ func defaultBasic() Basic {
 		Name:        "Redup",
 		Tagline:     "让真人、匿名者与 AI 智能体共同生活的社区",
 		Description: "Redup 是一个混合式社区平台，融合传统论坛、匿名讨论版与 AI Bot 生态。",
-		Language:    "zh-CN",
-		Timezone:    "Asia/Shanghai",
+		Language:              "zh-CN",
+		Timezone:              "Asia/Shanghai",
+		PostEditWindowMinutes: 5,
 	}
 }
 
@@ -131,6 +155,14 @@ func defaultModeration() Moderation {
 	}
 }
 
+// defaultLLM is an empty list — admin must add providers explicitly from
+// the admin panel. main.go's bootstrap will seed a couple of entries
+// from legacy .env vars if they're present and the list is still empty,
+// so existing deployments don't break on first boot.
+func defaultLLM() LLM {
+	return LLM{Providers: []LLMProvider{}}
+}
+
 // ---------- Typed getters ----------
 
 func (s *Service) GetBasic() (Basic, error) {
@@ -173,6 +205,11 @@ func (s *Service) GetModeration() (Moderation, error) {
 	return v, s.loadInto(KeyModeration, defaultModeration(), &v)
 }
 
+func (s *Service) GetLLM() (LLM, error) {
+	var v LLM
+	return v, s.loadInto(KeyLLM, defaultLLM(), &v)
+}
+
 // loadInto reads the raw JSON for key, falling back to the provided default
 // if the row is missing. Panics are impossible — bad JSON yields an error.
 func (s *Service) loadInto(key string, fallback any, dst any) error {
@@ -192,7 +229,13 @@ func (s *Service) loadInto(key string, fallback any, dst any) error {
 // ---------- Typed setters ----------
 
 func (s *Service) SaveBasic(v Basic, by int64) error {
-	return s.repo.Set(KeyBasic, v, by)
+	if err := s.repo.Set(KeyBasic, v, by); err != nil {
+		return err
+	}
+	if s.onBasicChange != nil {
+		s.onBasicChange(v)
+	}
+	return nil
 }
 
 func (s *Service) SaveRegistration(v Registration, by int64) error {
@@ -229,6 +272,19 @@ func (s *Service) SaveAnon(v Anon, by int64) error {
 	return nil
 }
 
+// SaveLLM persists the providers list and notifies any registered
+// listener (main.go → llm.Router) so live calls pick up the change
+// without a restart.
+func (s *Service) SaveLLM(v LLM, by int64) error {
+	if err := s.repo.Set(KeyLLM, v, by); err != nil {
+		return err
+	}
+	if s.onLLMChange != nil {
+		s.onLLMChange(v)
+	}
+	return nil
+}
+
 // ---------- Snapshot ----------
 
 // Snapshot is the full config used by /admin/site for initial load and by
@@ -242,6 +298,22 @@ type Snapshot struct {
 	Anon         Anon         `json:"anon"`
 	Credits      Credits      `json:"credits"`
 	Moderation   Moderation   `json:"moderation"`
+	LLM          LLM          `json:"llm"`
+}
+
+// MaskedSnapshot is like Snapshot but strips api keys from the LLM
+// providers list so the admin UI never receives them in plaintext.
+func (s *Service) MaskedSnapshot() (Snapshot, error) {
+	snap, err := s.Snapshot()
+	if err != nil {
+		return snap, err
+	}
+	for i := range snap.LLM.Providers {
+		if snap.LLM.Providers[i].APIKey != "" {
+			snap.LLM.Providers[i].APIKey = "••••••••"
+		}
+	}
+	return snap, nil
 }
 
 func (s *Service) Snapshot() (Snapshot, error) {
@@ -271,5 +343,27 @@ func (s *Service) Snapshot() (Snapshot, error) {
 	if snap.Moderation, err = s.GetModeration(); err != nil {
 		return snap, err
 	}
+	if snap.LLM, err = s.GetLLM(); err != nil {
+		return snap, err
+	}
 	return snap, nil
+}
+
+// MaskedLLM returns the provider list with API keys replaced by a
+// fixed-width mask. Used by the admin snapshot endpoint so the
+// frontend can render provider rows without ever seeing the real key.
+// Admins who want to rotate a key must submit a fresh one through the
+// put endpoint — the backend treats an empty api_key on put as "keep
+// existing", so the round-trip stays safe (see handler.putLLM).
+func (s *Service) MaskedLLM() (LLM, error) {
+	v, err := s.GetLLM()
+	if err != nil {
+		return v, err
+	}
+	for i := range v.Providers {
+		if v.Providers[i].APIKey != "" {
+			v.Providers[i].APIKey = "••••••••"
+		}
+	}
+	return v, nil
 }

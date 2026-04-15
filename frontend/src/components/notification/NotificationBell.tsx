@@ -9,6 +9,7 @@ import {
   markNotificationRead,
   type ServerNotification,
 } from "@/lib/api/notifications";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { useStream } from "@/lib/stream";
 import { useAuthStore } from "@/store/auth";
 import { stripMarkdown } from "@/lib/strip-markdown";
@@ -48,6 +49,8 @@ export function NotificationBell() {
   // Initial fetch — SSE handles subsequent updates in real time.
   useEffect(() => {
     if (!isAuthed) {
+      // Auth-state → component-state sync: legitimate reset on logout.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset on auth change
       setUnread(0);
       setItems([]);
       setLoaded(false);
@@ -177,8 +180,16 @@ export function NotificationBell() {
           </div>
 
           {!loaded ? (
-            <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-              加载中…
+            <div className="divide-y divide-border">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="flex gap-3 px-4 py-3">
+                  <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
+                  <div className="min-w-0 flex-1">
+                    <Skeleton className="mb-1.5 h-3 w-3/4" />
+                    <Skeleton className="h-3 w-1/2" />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : items.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-muted-foreground">

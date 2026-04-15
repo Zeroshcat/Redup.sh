@@ -59,6 +59,7 @@ export interface Topic {
   id: number;
   categoryId: number;
   categorySlug: string;
+  categoryName?: string;
   title: string;
   excerpt: string;
   body?: string;
@@ -67,6 +68,8 @@ export interface Topic {
   likeCount: number;
   viewCount: number;
   createdAt: string;
+  editedAt?: string;
+  minReadLevel?: number;
   lastPostAt: string;
   pinLevel?: number;
   pinWeight?: number;
@@ -85,6 +88,7 @@ export interface Post {
   author: Author;
   likeCount: number;
   createdAt: string;
+  editedAt?: string;
   parentId?: number;
   replyTo?: { floor: number; authorName: string };
   userLiked?: boolean;

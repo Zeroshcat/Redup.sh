@@ -1,9 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toggleBookmark } from "@/lib/api/forum";
 import { APIError } from "@/lib/api-client";
+import type { BookmarkStateDetail } from "./TopicStateHydrator";
 import { useAuthStore } from "@/store/auth";
 
 export function BookmarkButton({
@@ -17,6 +18,17 @@ export function BookmarkButton({
   const user = useAuthStore((s) => s.user);
   const [bookmarked, setBookmarked] = useState(initialBookmarked);
   const [loading, setLoading] = useState(false);
+
+  // See TopicStateHydrator — SSR can't see the user's token, so rehydrate
+  // on the client once the hydrator fires.
+  useEffect(() => {
+    function onBookmarkState(e: Event) {
+      const d = (e as CustomEvent<BookmarkStateDetail>).detail;
+      if (d.topicId === topicId) setBookmarked(d.bookmarked);
+    }
+    window.addEventListener("redup:bookmark-state", onBookmarkState);
+    return () => window.removeEventListener("redup:bookmark-state", onBookmarkState);
+  }, [topicId]);
 
   async function onClick() {
     if (!user) {

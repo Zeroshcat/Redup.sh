@@ -128,3 +128,40 @@
     @apply font-sans;
   }
 }
+/* ---------- Motion primitives ---------- */
+
+/* Shimmer for skeleton loaders — more life than a flat pulse */
+@keyframes redup-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@layer utilities {
+  .animate-shimmer {
+    background-image: linear-gradient(
+      90deg,
+      hsl(var(--muted) / 0.4) 0%,
+      hsl(var(--muted) / 0.8) 50%,
+      hsl(var(--muted) / 0.4) 100%
+    );
+    background-size: 200% 100%;
+    animation: redup-shimmer 1.8s ease-in-out infinite;
+  }
+
+  /* Subtle lift on cards — kept small so a dense list doesn't wobble */
+  .hover-lift {
+    transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+  }
+  .hover-lift:hover {
+    transform: translateY(-1px);
+  }
+
+  /* Badge pulse — used when a live counter flips. Short and small. */
+  @keyframes redup-badge-pulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.18); }
+  }
+  .animate-badge-pulse {
+    animation: redup-badge-pulse 400ms ease-out;
+  }
+}

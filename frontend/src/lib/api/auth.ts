@@ -60,3 +60,29 @@ export async function logout(): Promise<void> {
 export async function me(): Promise<ServerUser> {
   return api<ServerUser>("/api/users/me");
 }
+
+export interface UpdateProfileInput {
+  avatar_url?: string;
+  bio?: string;
+  location?: string;
+  website?: string;
+}
+
+// Self-service profile update. Returns the full refreshed user row so
+// the caller can push it back into the auth store in one hop.
+export async function updateMe(input: UpdateProfileInput): Promise<ServerUser> {
+  return api<ServerUser>("/api/users/me", {
+    method: "PUT",
+    body: input,
+  });
+}
+
+export async function changePassword(
+  oldPassword: string,
+  newPassword: string,
+): Promise<void> {
+  await api("/api/users/me/password", {
+    method: "POST",
+    body: { old_password: oldPassword, new_password: newPassword },
+  });
+}

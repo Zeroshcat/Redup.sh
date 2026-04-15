@@ -1,5 +1,13 @@
 @import "highlight.js/styles/github.css";
 
+/* highlight.js themes ship with their own background + padding on .hljs,
+   which would paint a second rectangle inside our CodeBlock wrapper. Strip
+   it here so the wrapper is the only thing controlling the frame. */
+.redup-md .hljs {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
 /* Dark mode token overrides — keep light theme as base, swap colors when .dark is set */
 .dark .hljs {
   color: #e6edf3;

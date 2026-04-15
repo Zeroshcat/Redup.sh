@@ -181,6 +181,76 @@ func (s *Service) GetByID(id int64) (*User, error) {
 	return u, nil
 }
 
+// UpdateProfileInput carries the self-service editable fields. Whatever
+// isn't supplied is trimmed/normalized in UpdateProfile; empty strings
+// are allowed (they clear the field) but oversized input is rejected so
+// the database columns never see truncation.
+type UpdateProfileInput struct {
+	AvatarURL string
+	Bio       string
+	Location  string
+	Website   string
+}
+
+var ErrInvalidProfile = errors.New("invalid profile field")
+
+func (s *Service) UpdateProfile(id int64, in UpdateProfileInput) (*User, error) {
+	in.AvatarURL = strings.TrimSpace(in.AvatarURL)
+	in.Bio = strings.TrimSpace(in.Bio)
+	in.Location = strings.TrimSpace(in.Location)
+	in.Website = strings.TrimSpace(in.Website)
+
+	// Keep these in sync with the column sizes in user.model.go:
+	// AvatarURL 512, Bio TEXT (cap at 500 runes as a sanity floor),
+	// Location 64, Website 255. Length in runes, not bytes.
+	if runes := []rune(in.AvatarURL); len(runes) > 512 {
+		return nil, ErrInvalidProfile
+	}
+	if runes := []rune(in.Bio); len(runes) > 500 {
+		return nil, ErrInvalidProfile
+	}
+	if runes := []rune(in.Location); len(runes) > 64 {
+		return nil, ErrInvalidProfile
+	}
+	if runes := []rune(in.Website); len(runes) > 255 {
+		return nil, ErrInvalidProfile
+	}
+	if in.Website != "" {
+		// Minimally strict URL check so a hostile client can't land
+		// javascript: or data: URIs on another user's profile.
+		if !strings.HasPrefix(in.Website, "http://") && !strings.HasPrefix(in.Website, "https://") {
+			return nil, ErrInvalidProfile
+		}
+	}
+
+	if err := s.repo.UpdateProfile(id, in.AvatarURL, in.Bio, in.Location, in.Website); err != nil {
+		return nil, err
+	}
+	return s.repo.FindByID(id)
+}
+
+// ChangePassword verifies the old password, validates the new one, and
+// writes the new bcrypt hash. Returns ErrInvalidCredential when the old
+// password is wrong (same code as login failure — don't leak whether
+// the account exists) and ErrWeakPassword when the new value is too short.
+func (s *Service) ChangePassword(id int64, oldPassword, newPassword string) error {
+	u, err := s.repo.FindByID(id)
+	if err != nil || u == nil {
+		return ErrInvalidCredential
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(oldPassword)); err != nil {
+		return ErrInvalidCredential
+	}
+	if len(newPassword) < 8 {
+		return ErrWeakPassword
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	return s.repo.UpdatePasswordHash(id, string(hash))
+}
+
 func (s *Service) List(opts ListOptions) ([]User, int64, error) {
 	return s.repo.List(opts)
 }
@@ -200,6 +270,23 @@ func (s *Service) Ban(id int64) (*User, error) {
 	}
 	u.Status = "banned"
 	return u, nil
+}
+
+// AdjustCreditScore applies a signed delta (positive restores, negative
+// penalizes) to the user's credit_score, clamped to [0, 100]. Returns the
+// user record and the new score. Used by admin moderation and report
+// handling paths.
+func (s *Service) AdjustCreditScore(id int64, delta int) (*User, int, error) {
+	u, err := s.repo.FindByID(id)
+	if err != nil || u == nil {
+		return nil, 0, ErrUserNotFound
+	}
+	next, err := s.repo.AdjustCreditScore(id, delta)
+	if err != nil {
+		return nil, 0, err
+	}
+	u.CreditScore = next
+	return u, next, nil
 }
 
 func (s *Service) Unban(id int64) (*User, error) {

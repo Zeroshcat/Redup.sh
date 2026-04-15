@@ -88,6 +88,13 @@ func NewService(repo *Repository, users UserLookup) *Service {
 // SetCallLogPublisher wires the stream publisher. Usage is filtered to
 // failure statuses inside recordCallWithLatency so a firehose of
 // successful invocations doesn't spam every admin client.
+// HasActiveBot reports whether the user owns at least one active bot.
+// Used by the forum service to gate topic creation in bot-type categories.
+func (s *Service) HasActiveBot(userID int64) (bool, error) {
+	n, err := s.repo.CountActiveByOwner(userID)
+	return n > 0, err
+}
+
 func (s *Service) SetCallLogPublisher(p CallLogPublisher) {
 	s.callLogPub = p
 }

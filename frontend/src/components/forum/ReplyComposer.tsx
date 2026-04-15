@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MarkdownEditor } from "@/components/markdown/MarkdownEditor";
+import type { ReplyTarget } from "./ReplyButton";
 import { createPost } from "@/lib/api/forum";
 import { APIError } from "@/lib/api-client";
 import { useAuthStore } from "@/store/auth";
@@ -21,6 +22,19 @@ export function ReplyComposer({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestion, setSuggestion] = useState<string | null>(null);
+  const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
+  // Synchronous lock — prevents rapid double-click from firing two requests
+  // before React commits setLoading(true). See /new page for the same pattern.
+  const submittingRef = useRef(false);
+
+  useEffect(() => {
+    function onReplyTo(e: Event) {
+      const detail = (e as CustomEvent<ReplyTarget | null>).detail;
+      setReplyTo(detail ?? null);
+    }
+    window.addEventListener("redup:reply-to", onReplyTo);
+    return () => window.removeEventListener("redup:reply-to", onReplyTo);
+  }, []);
 
   if (!user) {
     return (
@@ -31,17 +45,26 @@ export function ReplyComposer({
   }
 
   async function onSubmit() {
-    if (!content.trim() || loading) return;
+    if (!content.trim() || submittingRef.current) return;
+    submittingRef.current = true;
     setError(null);
     setSuggestion(null);
     setLoading(true);
     try {
-      await createPost(topicId, { content: content.trim() });
+      await createPost(topicId, {
+        content: content.trim(),
+        reply_to_floor: replyTo?.floor,
+      });
       setContent("");
+      setReplyTo(null);
       router.refresh();
     } catch (err) {
       if (err instanceof APIError) {
-        setError(err.message);
+        if (err.code === "duplicate_submission") {
+          setError("你刚刚已经发过同样的内容了，请稍等几秒再试");
+        } else {
+          setError(err.message);
+        }
         if (err.code === "moderation_blocked" && err.data) {
           const d = err.data as { suggestion?: string };
           if (d.suggestion) setSuggestion(d.suggestion);
@@ -50,6 +73,7 @@ export function ReplyComposer({
         setError("发送失败");
       }
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   }
@@ -62,7 +86,21 @@ export function ReplyComposer({
   }
 
   return (
-    <div className="space-y-3">
+    <div id="reply-composer" className="space-y-3 scroll-mt-20">
+      {replyTo && (
+        <div className="flex items-center justify-between rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
+          <span className="text-muted-foreground">
+            正在回复 <span className="font-medium text-foreground">#{replyTo.floor} {replyTo.authorName}</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setReplyTo(null)}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            ✕ 取消
+          </button>
+        </div>
+      )}
       <MarkdownEditor
         value={content}
         onChange={setContent}

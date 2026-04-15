@@ -58,10 +58,8 @@ services:
       BOT_ENABLED: ${BOT_ENABLED:-true}
       BOT_TIMEOUT_SEC: ${BOT_TIMEOUT_SEC:-15}
       BOT_MAX_CONTEXT: ${BOT_MAX_CONTEXT:-20}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com/v1}
+      # LLM provider credentials live in site_settings.llm and are
+      # managed via /admin/site → LLM 提供方. No env vars here.
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
     ports:

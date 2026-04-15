@@ -51,6 +51,7 @@ interface ActionState {
   deleteTarget: boolean;
   banUser: boolean;
   note: string;
+  creditScoreDelta: number;
 }
 
 const EMPTY_ACTIONS: ActionState = {
@@ -58,6 +59,7 @@ const EMPTY_ACTIONS: ActionState = {
   deleteTarget: false,
   banUser: false,
   note: "",
+  creditScoreDelta: 0,
 };
 
 function errorMessage(err: unknown): string {
@@ -103,7 +105,11 @@ export default function AdminReportsPage() {
       if (actions.banUser && r.target_type === "user") {
         await adminBanUser(r.target_id);
       }
-      await resolveReport(r.id, actions.note.trim());
+      await resolveReport(
+        r.id,
+        actions.note.trim(),
+        Math.trunc(actions.creditScoreDelta) || 0,
+      );
       cancelResolve();
       await reload();
     } catch (err) {
@@ -362,6 +368,42 @@ export default function AdminReportsPage() {
                             onChange={(v) => setActions({ ...actions, banUser: v })}
                           />
                         )}
+                      </div>
+                      <div className="mb-3 rounded-md border border-border bg-card px-3 py-2">
+                        <div className="mb-1 text-[11px] font-medium text-foreground">
+                          信用分调整（可选）
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            value={actions.creditScoreDelta || ""}
+                            onChange={(e) =>
+                              setActions({
+                                ...actions,
+                                creditScoreDelta: Number(e.target.value) || 0,
+                              })
+                            }
+                            placeholder="0（不调整）"
+                            className="w-24 rounded-md border border-input bg-background px-2 py-1 text-xs outline-none focus:border-ring"
+                          />
+                          <span className="text-[11px] text-muted-foreground">
+                            负数扣分，正数加回 · 范围钳到 [0, 100] · 作用于 {TARGET_LABEL[r.target_type]} 作者
+                          </span>
+                        </div>
+                        <div className="mt-1.5 flex gap-1">
+                          {[-20, -10, -5, -1].map((n) => (
+                            <button
+                              key={n}
+                              type="button"
+                              onClick={() =>
+                                setActions({ ...actions, creditScoreDelta: n })
+                              }
+                              className="rounded border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
+                            >
+                              {n}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                       <textarea
                         value={actions.note}

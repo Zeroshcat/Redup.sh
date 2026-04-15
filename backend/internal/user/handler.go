@@ -2,6 +2,7 @@ package user
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -61,10 +62,12 @@ func (h *Handler) Register(r *gin.RouterGroup, authMiddleware ...gin.HandlerFunc
 	// Public: anyone can view a user's public profile.
 	r.GET("/users/:username", h.publicProfile)
 
-	// Authenticated: current user info.
+	// Authenticated: current user info + self-service mutations.
 	me := r.Group("/users")
 	me.Use(auth.RequireAuth(h.jwt))
 	me.GET("/me", h.me)
+	me.PUT("/me", h.updateMe)
+	me.POST("/me/password", h.changePassword)
 }
 
 // RegisterAdmin mounts admin user-moderation endpoints. Caller is expected to
@@ -73,6 +76,49 @@ func (h *Handler) RegisterAdmin(r *gin.RouterGroup) {
 	r.GET("/users", h.adminList)
 	r.POST("/users/:id/ban", h.adminBan)
 	r.POST("/users/:id/unban", h.adminUnban)
+	r.POST("/users/:id/credit-score", h.adminAdjustCreditScore)
+}
+
+type adjustCreditScoreReq struct {
+	Delta  int    `json:"delta"`
+	Reason string `json:"reason"`
+}
+
+func (h *Handler) adminAdjustCreditScore(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.BadRequest(c, "invalid id")
+		return
+	}
+	var body adjustCreditScoreReq
+	if err := c.ShouldBindJSON(&body); err != nil {
+		httpx.BadRequest(c, "invalid request")
+		return
+	}
+	if body.Delta == 0 {
+		httpx.ValidationError(c, "invalid_delta", "delta must be non-zero")
+		return
+	}
+	u, newScore, err := h.svc.AdjustCreditScore(id, body.Delta)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			httpx.NotFound(c, "user not found")
+			return
+		}
+		httpx.Internal(c, err.Error())
+		return
+	}
+	h.record(c, audit.Input{
+		Action:      "user.credit_score_adjust",
+		TargetType:  "user",
+		TargetID:    u.ID,
+		TargetLabel: "@" + u.Username,
+		Detail:      fmt.Sprintf("delta=%d new=%d reason=%s", body.Delta, newScore, body.Reason),
+	})
+	httpx.OK(c, gin.H{
+		"user_id":      u.ID,
+		"credit_score": newScore,
+	})
 }
 
 type AdminUserListResp struct {
@@ -327,6 +373,74 @@ func (h *Handler) me(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, u)
+}
+
+// updateMeReq is the wire shape for self-service profile updates. Note
+// that username, email, role, status, credits, and xp are NOT exposed
+// here — those go through admin endpoints or dedicated flows.
+type updateMeReq struct {
+	AvatarURL string `json:"avatar_url"`
+	Bio       string `json:"bio"`
+	Location  string `json:"location"`
+	Website   string `json:"website"`
+}
+
+func (h *Handler) updateMe(c *gin.Context) {
+	id, ok := auth.CurrentUserID(c)
+	if !ok {
+		httpx.Unauthorized(c, "unauthorized")
+		return
+	}
+	var req updateMeReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.BadRequest(c, "invalid request")
+		return
+	}
+	u, err := h.svc.UpdateProfile(id, UpdateProfileInput{
+		AvatarURL: req.AvatarURL,
+		Bio:       req.Bio,
+		Location:  req.Location,
+		Website:   req.Website,
+	})
+	if err != nil {
+		if errors.Is(err, ErrInvalidProfile) {
+			httpx.ValidationError(c, "invalid_profile", "profile field too long or malformed")
+			return
+		}
+		httpx.Internal(c, err.Error())
+		return
+	}
+	httpx.OK(c, u)
+}
+
+type changePasswordReq struct {
+	OldPassword string `json:"old_password" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required"`
+}
+
+func (h *Handler) changePassword(c *gin.Context) {
+	id, ok := auth.CurrentUserID(c)
+	if !ok {
+		httpx.Unauthorized(c, "unauthorized")
+		return
+	}
+	var req changePasswordReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.BadRequest(c, "invalid request")
+		return
+	}
+	if err := h.svc.ChangePassword(id, req.OldPassword, req.NewPassword); err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidCredential):
+			httpx.Fail(c, 401, httpx.CodeInvalidCredential, "current password is incorrect")
+		case errors.Is(err, ErrWeakPassword):
+			httpx.ValidationError(c, httpx.CodeWeakPassword, "new password must be at least 8 characters")
+		default:
+			httpx.Internal(c, err.Error())
+		}
+		return
+	}
+	httpx.NoContent(c)
 }
 
 func (h *Handler) issueTokens(c *gin.Context, u *User, created bool) {

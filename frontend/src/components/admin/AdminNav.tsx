@@ -116,7 +116,14 @@ export function AdminNav() {
                         <span className="w-4 text-center">{item.icon}</span>
                         <span className="flex-1">{item.label}</span>
                         {badge > 0 && (
-                          <span className="ml-auto min-w-[1.25rem] rounded-full bg-rose-500/90 px-1.5 py-0.5 text-center text-[10px] font-semibold leading-none text-white">
+                          // key={badge} remounts the element on every
+                          // value change, which restarts the CSS
+                          // animation so the badge flashes with each
+                          // live increment.
+                          <span
+                            key={badge}
+                            className="ml-auto min-w-[1.25rem] animate-badge-pulse rounded-full bg-rose-500/90 px-1.5 py-0.5 text-center text-[10px] font-semibold leading-none text-white"
+                          >
                             {badge > 99 ? "99+" : badge}
                           </span>
                         )}
