@@ -357,7 +357,8 @@ func (r *Repository) ListTopicsByUserID(userID int64, limit int) ([]Topic, error
 		limit = 30
 	}
 	var items []Topic
-	err := r.db.Where("user_id = ? AND deleted_at IS NULL AND is_anon = false", userID).
+	err := r.db.Preload("User").
+		Where("user_id = ? AND deleted_at IS NULL AND is_anon = false", userID).
 		Order("created_at DESC").Limit(limit).Find(&items).Error
 	if err != nil {
 		return nil, err
@@ -370,7 +371,8 @@ func (r *Repository) ListPostsByUserID(userID int64, limit int) ([]Post, error) 
 		limit = 30
 	}
 	var items []Post
-	err := r.db.Where("user_id = ? AND deleted_at IS NULL AND is_anon = false", userID).
+	err := r.db.Preload("User").
+		Where("user_id = ? AND deleted_at IS NULL AND is_anon = false", userID).
 		Order("created_at DESC").Limit(limit).Find(&items).Error
 	return items, err
 }

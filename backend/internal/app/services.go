@@ -16,6 +16,7 @@ import (
 	"github.com/redup/backend/internal/credits"
 	"github.com/redup/backend/internal/follow"
 	"github.com/redup/backend/internal/forum"
+	"github.com/redup/backend/internal/invite"
 	httpx "github.com/redup/backend/internal/http"
 	"github.com/redup/backend/internal/llm"
 	"github.com/redup/backend/internal/messaging"
@@ -67,6 +68,7 @@ type services struct {
 	reportSvc      *report.Service
 	forumSvc       *forum.Service
 	announcementSvc *announcement.Service
+	inviteSvc       *invite.Service
 	skillHandler   *skills.Handler
 
 	// Handlers
@@ -86,6 +88,7 @@ type services struct {
 	forumHandler        *forum.Handler
 	streamHandler       *stream.Handler
 	announcementHandler *announcement.Handler
+	inviteHandler       *invite.Handler
 	anonAdminHandler    *anon.Handler
 }
 
@@ -124,6 +127,11 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 
 	uLookup := &userLookup{userSvc: s.userSvc}
 
+	// --- invite codes ---
+	inviteRepo := invite.NewRepository(database)
+	s.inviteSvc = invite.NewService(inviteRepo)
+	s.inviteHandler = invite.NewHandler(s.inviteSvc)
+
 	// --- anon ---
 	anonRepo := anon.NewRepository(database)
 	s.anonGen = anon.NewGenerator(int64(cfg.SnowflakeNodeID), cfg.AnonIDPrefix)
@@ -145,6 +153,13 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 		log.Printf("anon prefix updated at runtime: %s", p)
 	})
 	s.siteHandler = site.NewHandler(s.siteSvc)
+
+	// Wire registration policy enforcement into the user service. The
+	// adapter reads the live registration config from site_settings; the
+	// invite validator lets the user service check + consume codes without
+	// importing the invite package directly.
+	s.userSvc.SetRegistrationConfig(&registrationConfigAdapter{siteSvc: s.siteSvc})
+	s.userSvc.SetInviteValidator(s.inviteSvc)
 
 	// --- credits / wallet ---
 	creditsRepo := credits.NewRepository(database)
@@ -306,6 +321,7 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 	// Audit recorders into every admin handler before routes mount. We
 	// do it here (not in routes.go) so the wiring stays next to the
 	// handlers they affect.
+	s.inviteHandler.SetAudit(s.auditSvc)
 	s.forumHandler.SetAudit(s.auditSvc)
 	s.userHandler.SetAudit(s.auditSvc)
 	s.reportHandler.SetAudit(s.auditSvc)

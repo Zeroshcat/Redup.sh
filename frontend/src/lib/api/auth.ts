@@ -26,6 +26,7 @@ export async function register(input: {
   username: string;
   email: string;
   password: string;
+  invite_code?: string;
 }): Promise<AuthSession> {
   const session = await api<AuthSession>("/api/auth/register", {
     method: "POST",

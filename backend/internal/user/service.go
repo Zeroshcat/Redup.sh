@@ -9,15 +9,35 @@ import (
 )
 
 var (
-	ErrUsernameTaken     = errors.New("username already taken")
-	ErrEmailTaken        = errors.New("email already taken")
-	ErrInvalidUsername   = errors.New("invalid username")
-	ErrInvalidEmail      = errors.New("invalid email")
-	ErrWeakPassword      = errors.New("password too weak")
-	ErrInvalidCredential = errors.New("invalid credentials")
-	ErrUserNotFound      = errors.New("user not found")
-	ErrAccountDisabled   = errors.New("account disabled")
+	ErrUsernameTaken      = errors.New("username already taken")
+	ErrEmailTaken         = errors.New("email already taken")
+	ErrInvalidUsername    = errors.New("invalid username")
+	ErrInvalidEmail       = errors.New("invalid email")
+	ErrWeakPassword       = errors.New("password too weak")
+	ErrInvalidCredential  = errors.New("invalid credentials")
+	ErrUserNotFound       = errors.New("user not found")
+	ErrAccountDisabled    = errors.New("account disabled")
+	ErrRegistrationClosed = errors.New("registration is closed")
+	ErrInviteRequired     = errors.New("invite code required")
+	ErrInvalidInviteCode  = errors.New("invalid invite code")
+	ErrEmailDomainBlocked = errors.New("email domain not allowed")
 )
+
+// RegistrationConfig is the narrow read-only interface user.Service needs
+// to enforce the live registration policy from site_settings.
+type RegistrationConfig interface {
+	RegistrationMode() string
+	InviteRequired() bool
+	EmailDomainRestricted() bool
+	AllowedEmailDomains() []string
+}
+
+// InviteValidator lets the user service check + consume invite codes
+// without importing the invite package.
+type InviteValidator interface {
+	Validate(code string) error
+	Consume(code string, userID int64, username string) error
+}
 
 var (
 	usernameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{2,31}$`)
@@ -34,6 +54,8 @@ type Service struct {
 	repo       *Repository
 	credits    CreditsAwarder
 	loginGuard LoginGuard
+	regConfig  RegistrationConfig
+	invite     InviteValidator
 }
 
 func NewService(repo *Repository) *Service {
@@ -41,16 +63,54 @@ func NewService(repo *Repository) *Service {
 }
 
 func (s *Service) SetCreditsAwarder(c CreditsAwarder) { s.credits = c }
+func (s *Service) SetRegistrationConfig(c RegistrationConfig) { s.regConfig = c }
+func (s *Service) SetInviteValidator(v InviteValidator) { s.invite = v }
 
 type RegisterInput struct {
-	Username string
-	Email    string
-	Password string
+	Username   string
+	Email      string
+	Password   string
+	InviteCode string
 }
 
 func (s *Service) Register(in RegisterInput) (*User, error) {
 	in.Username = strings.TrimSpace(in.Username)
 	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
+
+	// Enforce registration policy from site_settings.
+	if s.regConfig != nil {
+		mode := s.regConfig.RegistrationMode()
+		switch mode {
+		case "closed":
+			return nil, ErrRegistrationClosed
+		case "invite":
+			if strings.TrimSpace(in.InviteCode) == "" {
+				return nil, ErrInviteRequired
+			}
+		}
+		if mode == "open" && s.regConfig.InviteRequired() {
+			if strings.TrimSpace(in.InviteCode) == "" {
+				return nil, ErrInviteRequired
+			}
+		}
+		if s.regConfig.EmailDomainRestricted() {
+			allowed := s.regConfig.AllowedEmailDomains()
+			if len(allowed) > 0 {
+				parts := strings.SplitN(in.Email, "@", 2)
+				if len(parts) != 2 || !domainAllowed(parts[1], allowed) {
+					return nil, ErrEmailDomainBlocked
+				}
+			}
+		}
+	}
+
+	// Pre-validate invite code before heavy work (bcrypt etc).
+	needsInvite := strings.TrimSpace(in.InviteCode) != ""
+	if needsInvite && s.invite != nil {
+		if err := s.invite.Validate(in.InviteCode); err != nil {
+			return nil, ErrInvalidInviteCode
+		}
+	}
 
 	if !usernameRegex.MatchString(in.Username) {
 		return nil, ErrInvalidUsername
@@ -90,10 +150,29 @@ func (s *Service) Register(in RegisterInput) (*User, error) {
 	if err := s.repo.CreateWithFirstAdminBootstrap(u); err != nil {
 		return nil, err
 	}
+
+	// Consume the invite code AFTER user creation succeeds — if the code
+	// has already been fully used between our Validate and now, the user
+	// still gets created (acceptable: the invite was valid at the time
+	// they submitted).
+	if needsInvite && s.invite != nil {
+		_ = s.invite.Consume(in.InviteCode, u.ID, u.Username)
+	}
+
 	if s.credits != nil {
 		s.credits.Award(u.ID, "signup_bonus", "user", u.ID, "新用户注册礼包")
 	}
 	return u, nil
+}
+
+func domainAllowed(domain string, allowed []string) bool {
+	domain = strings.ToLower(domain)
+	for _, a := range allowed {
+		if strings.ToLower(strings.TrimSpace(a)) == domain {
+			return true
+		}
+	}
+	return false
 }
 
 type LoginInput struct {

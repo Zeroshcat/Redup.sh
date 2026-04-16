@@ -148,6 +148,44 @@ func (a *forumNotifyAdapter) NotifyModerationHidden(
 	})
 }
 
+// registrationConfigAdapter satisfies user.RegistrationConfig by reading the
+// live registration policy from site_settings.
+type registrationConfigAdapter struct {
+	siteSvc *site.Service
+}
+
+func (a *registrationConfigAdapter) RegistrationMode() string {
+	r, err := a.siteSvc.GetRegistration()
+	if err != nil {
+		return "open"
+	}
+	return r.Mode
+}
+
+func (a *registrationConfigAdapter) InviteRequired() bool {
+	r, err := a.siteSvc.GetRegistration()
+	if err != nil {
+		return false
+	}
+	return r.InviteRequired
+}
+
+func (a *registrationConfigAdapter) EmailDomainRestricted() bool {
+	r, err := a.siteSvc.GetRegistration()
+	if err != nil {
+		return false
+	}
+	return r.EmailDomainRestricted
+}
+
+func (a *registrationConfigAdapter) AllowedEmailDomains() []string {
+	r, err := a.siteSvc.GetRegistration()
+	if err != nil {
+		return nil
+	}
+	return r.AllowedEmailDomains
+}
+
 // creditsConfigAdapter bridges the live site_settings credits group to the
 // credits package's narrow ConfigSource interface.
 type creditsConfigAdapter struct {

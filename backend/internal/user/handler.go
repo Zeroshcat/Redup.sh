@@ -260,9 +260,10 @@ func (h *Handler) publicProfile(c *gin.Context) {
 }
 
 type registerReq struct {
-	Username string `json:"username" binding:"required"`
-	Email    string `json:"email" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Username   string `json:"username" binding:"required"`
+	Email      string `json:"email" binding:"required"`
+	Password   string `json:"password" binding:"required"`
+	InviteCode string `json:"invite_code"`
 }
 
 type authResp struct {
@@ -279,9 +280,10 @@ func (h *Handler) register(c *gin.Context) {
 		return
 	}
 	u, err := h.svc.Register(RegisterInput{
-		Username: req.Username,
-		Email:    req.Email,
-		Password: req.Password,
+		Username:   req.Username,
+		Email:      req.Email,
+		Password:   req.Password,
+		InviteCode: req.InviteCode,
 	})
 	if err != nil {
 		h.writeServiceError(c, err)
@@ -481,6 +483,14 @@ func (h *Handler) writeServiceError(c *gin.Context, err error) {
 		httpx.Fail(c, 429, httpx.CodeRateLimited, "账号暂时被锁定，请稍后重试")
 	case errors.Is(err, ErrAccountDisabled):
 		httpx.Fail(c, 403, httpx.CodeAccountDisabled, "account is disabled")
+	case errors.Is(err, ErrRegistrationClosed):
+		httpx.Fail(c, 403, "registration_closed", "registration is currently closed")
+	case errors.Is(err, ErrInviteRequired):
+		httpx.Fail(c, 403, "invite_required", "an invite code is required to register")
+	case errors.Is(err, ErrInvalidInviteCode):
+		httpx.ValidationError(c, "invalid_invite_code", "invite code is invalid, expired, or fully used")
+	case errors.Is(err, ErrEmailDomainBlocked):
+		httpx.ValidationError(c, "email_domain_blocked", "this email domain is not allowed")
 	default:
 		httpx.Internal(c, "internal server error")
 	}

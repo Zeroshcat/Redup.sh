@@ -15,6 +15,7 @@ import (
 	"github.com/redup/backend/internal/db"
 	"github.com/redup/backend/internal/follow"
 	"github.com/redup/backend/internal/forum"
+	"github.com/redup/backend/internal/invite"
 	"github.com/redup/backend/internal/llm"
 	"github.com/redup/backend/internal/messaging"
 	"github.com/redup/backend/internal/moderation"
@@ -66,6 +67,8 @@ func New(cfg *config.Config) (*App, error) {
 		&messaging.Message{},
 		&announcement.Announcement{},
 		&llm.CallLog{},
+		&invite.Code{},
+		&invite.Usage{},
 	); err != nil {
 		return nil, err
 	}

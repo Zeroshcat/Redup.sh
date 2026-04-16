@@ -35,6 +35,7 @@ const NAV_SECTIONS: { title: string; items: { href: string; label: string; icon:
     items: [
       { href: "/admin/users", label: "用户管理", icon: "👤" },
       { href: "/admin/roles", label: "角色权限", icon: "🎫" },
+      { href: "/admin/invites", label: "邀请码管理", icon: "🎟" },
       { href: "/admin/bots", label: "Bot 审核", icon: "⚡" },
       { href: "/admin/bot-logs", label: "Bot 调用日志", icon: "📋" },
     ],

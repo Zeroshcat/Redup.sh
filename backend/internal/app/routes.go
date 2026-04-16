@@ -163,6 +163,7 @@ func mountAdminAPI(r *gin.Engine, s *services) {
 	dashboardHandler.RegisterAdmin(admin)
 
 	s.announcementHandler.RegisterAdmin(admin)
+	s.inviteHandler.RegisterAdmin(admin)
 	s.creditsHandler.RegisterAdmin(admin)
 	s.notifHandler.RegisterAdmin(admin)
 	s.messagingHandler.RegisterAdmin(admin)

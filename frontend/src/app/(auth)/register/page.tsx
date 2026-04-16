@@ -1,27 +1,56 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { register } from "@/lib/api/auth";
 import { APIError } from "@/lib/api-client";
 import { useAuthStore } from "@/store/auth";
 
 export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterInner />
+    </Suspense>
+  );
+}
+
+function RegisterInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const setUser = useAuthStore((s) => s.setUser);
 
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState(searchParams.get("invite") ?? "");
   const [agree, setAgree] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Fetch the live registration mode from the public site endpoint so we
+  // can gate the UI before the user even fills out the form. Fail-open
+  // to "open" if the fetch fails — the server-side check is authoritative.
+  const [regMode, setRegMode] = useState<string>("open");
+  useEffect(() => {
+    fetch(
+      `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"}/api/site`,
+    )
+      .then((r) => r.json())
+      .then((r) => {
+        if (r?.data?.registration_mode) setRegMode(r.data.registration_mode);
+      })
+      .catch(() => {});
+  }, []);
+
+  const needsInvite = regMode === "invite";
+  const isClosed = regMode === "closed";
+
   const usernameOk = /^[a-zA-Z][a-zA-Z0-9_-]{2,31}$/.test(username);
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const passwordOk = password.length >= 8;
-  const canSubmit = usernameOk && emailOk && passwordOk && agree;
+  const inviteOk = !needsInvite || inviteCode.trim().length > 0;
+  const canSubmit = usernameOk && emailOk && passwordOk && inviteOk && agree && !isClosed;
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -29,7 +58,12 @@ export default function RegisterPage() {
     setError(null);
     setLoading(true);
     try {
-      const session = await register({ username, email, password });
+      const session = await register({
+        username,
+        email,
+        password,
+        invite_code: inviteCode.trim() || undefined,
+      });
       setUser(session.user);
       router.push("/");
     } catch (err) {
@@ -52,6 +86,12 @@ export default function RegisterPage() {
           一个让真人、匿名者与 AI 智能体共存的社区
         </p>
       </div>
+
+      {isClosed && (
+        <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-5 text-center text-sm text-amber-700 dark:text-amber-300">
+          🚫 当前社区已关闭注册，暂不接受新用户
+        </div>
+      )}
 
       <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
         <form className="space-y-4" onSubmit={onSubmit}>
@@ -105,6 +145,25 @@ export default function RegisterPage() {
             />
             <PasswordStrength password={password} />
           </div>
+
+          {needsInvite && (
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                邀请码
+              </label>
+              <input
+                type="text"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+                placeholder="请输入邀请码"
+                maxLength={32}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm uppercase tracking-widest outline-none focus:border-ring"
+              />
+              {inviteCode && inviteCode.trim().length < 4 && (
+                <p className="mt-1 text-[11px] text-red-600">邀请码格式不正确</p>
+              )}
+            </div>
+          )}
 
           <label className="flex items-start gap-2 text-xs text-muted-foreground">
             <input
@@ -175,6 +234,14 @@ function errorMessage(err: APIError): string {
       return "邮箱格式不正确";
     case "weak_password":
       return "密码至少 8 位";
+    case "registration_closed":
+      return "当前社区已关闭注册";
+    case "invite_required":
+      return "注册需要邀请码";
+    case "invalid_invite_code":
+      return "邀请码无效、已过期或已用完";
+    case "email_domain_blocked":
+      return "该邮箱域名不在允许注册列表中";
     case "bad_request":
       return "请求格式错误";
     default:
