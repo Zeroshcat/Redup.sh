@@ -86,11 +86,18 @@ async function doRequest<T>(
 
   const requestId = newRequestId();
 
+  // FormData must be sent without Content-Type so the browser sets the
+  // multipart boundary automatically.
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
+
   const finalHeaders: Record<string, string> = {
     "Content-Type": "application/json",
     "X-Request-ID": requestId,
     ...((headers as Record<string, string>) ?? {}),
   };
+  if (isFormData) {
+    delete finalHeaders["Content-Type"];
+  }
 
   if (auth) {
     const token = getAccessToken();
@@ -100,7 +107,7 @@ async function doRequest<T>(
   const res = await fetch(`${API_URL}${path}`, {
     ...rest,
     headers: finalHeaders,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: isFormData ? (body as FormData) : body !== undefined ? JSON.stringify(body) : undefined,
   });
 
   const serverRid = res.headers.get("X-Request-ID") ?? requestId;

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { MarkdownEditor } from "@/components/markdown/MarkdownEditor";
 import type { ReplyTarget } from "./ReplyButton";
 import { createPost } from "@/lib/api/forum";
+import type { ServerAttachment } from "@/lib/api/upload";
 import { APIError } from "@/lib/api-client";
 import { useAuthStore } from "@/store/auth";
 
@@ -24,6 +25,7 @@ export function ReplyComposer({
   const [error, setError] = useState<string | null>(null);
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
+  const [attachmentIds, setAttachmentIds] = useState<number[]>([]);
   // Synchronous lock — prevents rapid double-click from firing two requests
   // before React commits setLoading(true). See /new page for the same pattern.
   const submittingRef = useRef(false);
@@ -55,9 +57,11 @@ export function ReplyComposer({
       await createPost(topicId, {
         content: content.trim(),
         reply_to_floor: replyTo?.floor,
+        attachment_ids: attachmentIds.length > 0 ? attachmentIds : undefined,
       });
       setContent("");
       setReplyTo(null);
+      setAttachmentIds([]);
       router.refresh();
     } catch (err) {
       if (err instanceof APIError) {
@@ -107,6 +111,7 @@ export function ReplyComposer({
         onChange={setContent}
         placeholder="写下你的回复… 支持 Markdown，输入 @ 可以召唤 Bot"
         minHeight={180}
+        onAttachmentsChange={(atts) => setAttachmentIds(atts.map((a) => a.id))}
       />
       {error && (
         <div className="rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">

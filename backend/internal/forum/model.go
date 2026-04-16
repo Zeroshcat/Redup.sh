@@ -69,6 +69,10 @@ type Topic struct {
 	// when the caller is authenticated so the frontend can render "已赞/已收藏".
 	UserLiked      bool `gorm:"-" json:"user_liked,omitempty"`
 	UserBookmarked bool `gorm:"-" json:"user_bookmarked,omitempty"`
+
+	// Attachments loaded from the upload module. Transient — not persisted
+	// on the topics table. The handler hydrates these after fetching.
+	Attachments []AttachmentRef `gorm:"-" json:"attachments,omitempty"`
 }
 
 func (Topic) TableName() string { return "topics" }
@@ -93,6 +97,21 @@ type Post struct {
 	DeletedAt      *time.Time `gorm:"index:idx_posts_topic_deleted" json:"-"`
 
 	UserLiked bool `gorm:"-" json:"user_liked,omitempty"`
+
+	// Attachments loaded from the upload module.
+	Attachments []AttachmentRef `gorm:"-" json:"attachments,omitempty"`
+}
+
+// AttachmentRef is the lightweight view of an attachment embedded in
+// topic/post API responses. Lives here to avoid forum importing upload.
+type AttachmentRef struct {
+	ID       int64  `json:"id"`
+	FileName string `json:"file_name"`
+	FileSize int64  `json:"file_size"`
+	MIMEType string `json:"mime_type"`
+	URL      string `json:"url"`
+	Width    int    `json:"width,omitempty"`
+	Height   int    `json:"height,omitempty"`
 }
 
 // BotRef is a minimal view of the bots table — kept here to avoid a cyclic

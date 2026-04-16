@@ -290,11 +290,12 @@ func (h *Handler) userPosts(c *gin.Context) {
 }
 
 type createTopicReq struct {
-	Category     string `json:"category" binding:"required"`
-	Title        string `json:"title" binding:"required"`
-	Body         string `json:"body" binding:"required"`
-	IsAnon       bool   `json:"is_anon"`
-	MinReadLevel int16  `json:"min_read_level"`
+	Category      string  `json:"category" binding:"required"`
+	Title         string  `json:"title" binding:"required"`
+	Body          string  `json:"body" binding:"required"`
+	IsAnon        bool    `json:"is_anon"`
+	MinReadLevel  int16   `json:"min_read_level"`
+	AttachmentIDs []int64 `json:"attachment_ids"`
 }
 
 func (h *Handler) createTopic(c *gin.Context) {
@@ -305,12 +306,13 @@ func (h *Handler) createTopic(c *gin.Context) {
 	}
 	uid, _ := auth.CurrentUserID(c)
 	t, err := h.svc.CreateTopic(CreateTopicInput{
-		UserID:       uid,
-		CategorySlug: req.Category,
-		Title:        req.Title,
-		Body:         req.Body,
-		IsAnon:       req.IsAnon,
-		MinReadLevel: req.MinReadLevel,
+		UserID:        uid,
+		CategorySlug:  req.Category,
+		Title:         req.Title,
+		Body:          req.Body,
+		IsAnon:        req.IsAnon,
+		MinReadLevel:  req.MinReadLevel,
+		AttachmentIDs: req.AttachmentIDs,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -320,8 +322,9 @@ func (h *Handler) createTopic(c *gin.Context) {
 }
 
 type createPostReq struct {
-	Content      string `json:"content" binding:"required"`
-	ReplyToFloor *int   `json:"reply_to_floor,omitempty"`
+	Content       string  `json:"content" binding:"required"`
+	ReplyToFloor  *int    `json:"reply_to_floor,omitempty"`
+	AttachmentIDs []int64 `json:"attachment_ids"`
 }
 
 func (h *Handler) createPost(c *gin.Context) {
@@ -337,10 +340,11 @@ func (h *Handler) createPost(c *gin.Context) {
 	}
 	uid, _ := auth.CurrentUserID(c)
 	p, err := h.svc.CreatePost(CreatePostInput{
-		TopicID:      id,
-		UserID:       uid,
-		Content:      req.Content,
-		ReplyToFloor: req.ReplyToFloor,
+		TopicID:       id,
+		UserID:        uid,
+		Content:       req.Content,
+		ReplyToFloor:  req.ReplyToFloor,
+		AttachmentIDs: req.AttachmentIDs,
 	})
 	if err != nil {
 		h.writeError(c, err)

@@ -23,6 +23,7 @@ import (
 	redisx "github.com/redup/backend/internal/redis"
 	"github.com/redup/backend/internal/report"
 	"github.com/redup/backend/internal/translation"
+	"github.com/redup/backend/internal/upload"
 	"github.com/redup/backend/internal/user"
 )
 
@@ -68,6 +69,7 @@ func New(cfg *config.Config) (*App, error) {
 		&messaging.Conversation{},
 		&messaging.Message{},
 		&announcement.Announcement{},
+		&upload.Attachment{},
 		&llm.CallLog{},
 	); err != nil {
 		return nil, err

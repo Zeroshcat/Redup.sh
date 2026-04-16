@@ -27,6 +27,7 @@ import (
 	"github.com/redup/backend/internal/skills"
 	"github.com/redup/backend/internal/stream"
 	"github.com/redup/backend/internal/translation"
+	"github.com/redup/backend/internal/upload"
 	"github.com/redup/backend/internal/user"
 
 	redis "github.com/redis/go-redis/v9"
@@ -68,6 +69,7 @@ type services struct {
 	reportSvc      *report.Service
 	forumSvc       *forum.Service
 	announcementSvc *announcement.Service
+	uploadSvc       *upload.Service
 	skillHandler   *skills.Handler
 
 	// Handlers
@@ -87,6 +89,7 @@ type services struct {
 	forumHandler        *forum.Handler
 	streamHandler       *stream.Handler
 	announcementHandler *announcement.Handler
+	uploadHandler       *upload.Handler
 	anonAdminHandler    *anon.Handler
 }
 
@@ -289,6 +292,7 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 		MaxContext: cfg.BotMaxContext,
 	})
 	s.forumSvc.SetBotTrigger(s.botSvc)
+	s.forumSvc.SetAttachmentBinder(&forumAttachmentAdapter{uploadSvc: s.uploadSvc})
 
 	s.forumHandler = forum.NewHandler(s.forumSvc, s.jwtMgr)
 
@@ -303,6 +307,14 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 
 	// --- skills (bot reverse-call API) ---
 	s.skillHandler = skills.NewHandler(s.botSvc, s.forumSvc, s.auditSvc)
+
+	// --- upload ---
+	uploadRepo := upload.NewRepository(database)
+	uploadCfg := upload.DefaultConfig()
+	uploadCfg.UploadDir = cfg.UploadDir
+	uploadCfg.MaxFileSize = cfg.UploadMaxBytes
+	s.uploadSvc = upload.NewService(uploadRepo, uploadCfg)
+	s.uploadHandler = upload.NewHandler(s.uploadSvc, s.jwtMgr)
 
 	// Audit recorders into every admin handler before routes mount. We
 	// do it here (not in routes.go) so the wiring stays next to the

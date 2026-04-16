@@ -26,6 +26,9 @@ type Config struct {
 	BotTimeoutSec int
 	BotMaxContext int
 
+	UploadDir      string
+	UploadMaxBytes int64
+
 	SentryDSN         string
 	SentryEnvironment string
 }
@@ -52,6 +55,9 @@ func Load() *Config {
 		BotEnabled:    envBool("BOT_ENABLED", false),
 		BotTimeoutSec: envInt("BOT_TIMEOUT_SEC", 15),
 		BotMaxContext: envInt("BOT_MAX_CONTEXT", 20),
+
+		UploadDir:      envStr("UPLOAD_DIR", "./uploads"),
+		UploadMaxBytes: int64(envInt("UPLOAD_MAX_BYTES", 20<<20)),
 
 		// NOTE: LLM provider credentials (OpenAI, Anthropic, DeepSeek, …)
 		// live in site_settings.llm and are managed exclusively from

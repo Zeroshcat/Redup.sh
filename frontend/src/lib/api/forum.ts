@@ -1,4 +1,5 @@
 import { api } from "@/lib/api-client";
+import type { ServerAttachment } from "./upload";
 
 export interface ServerCategory {
   id: number;
@@ -48,6 +49,7 @@ export interface ServerTopic {
   min_read_level?: number;
   user_liked?: boolean;
   user_bookmarked?: boolean;
+  attachments?: ServerAttachment[];
 }
 
 export interface ServerBotRef {
@@ -77,6 +79,7 @@ export interface ServerPost {
   created_at: string;
   edited_at?: string;
   user_liked?: boolean;
+  attachments?: ServerAttachment[];
 }
 
 export interface ServerTopicDetail {
@@ -133,6 +136,7 @@ export interface CreateTopicInput {
   body: string;
   is_anon?: boolean;
   min_read_level?: number;
+  attachment_ids?: number[];
 }
 
 export function createTopic(input: CreateTopicInput) {
@@ -145,6 +149,7 @@ export function createTopic(input: CreateTopicInput) {
 export interface CreatePostInput {
   content: string;
   reply_to_floor?: number;
+  attachment_ids?: number[];
 }
 
 export function createPost(topicId: number, input: CreatePostInput) {

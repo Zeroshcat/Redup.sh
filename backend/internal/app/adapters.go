@@ -28,6 +28,7 @@ import (
 	"github.com/redup/backend/internal/report"
 	"github.com/redup/backend/internal/stream"
 	"github.com/redup/backend/internal/translation"
+	"github.com/redup/backend/internal/upload"
 	"github.com/redup/backend/internal/user"
 )
 
@@ -589,4 +590,48 @@ func (a *reportNotifyAdapter) NotifyReportHandled(
 		Text:        text,
 		Preview:     note,
 	})
+}
+
+// forumAttachmentAdapter bridges upload.Service to forum.AttachmentBinder
+// so the forum package never imports upload directly.
+type forumAttachmentAdapter struct {
+	uploadSvc *upload.Service
+}
+
+func (a *forumAttachmentAdapter) BindToTarget(ids []int64, targetType string, targetID int64, userID int64) ([]forum.AttachmentRef, error) {
+	if err := a.uploadSvc.AttachToTarget(ids, targetType, targetID, userID); err != nil {
+		return nil, err
+	}
+	atts, err := a.uploadSvc.GetAttachments(targetType, targetID)
+	if err != nil {
+		return nil, err
+	}
+	return toAttachmentRefs(atts), nil
+}
+
+func (a *forumAttachmentAdapter) GetForTarget(targetType string, targetID int64) ([]forum.AttachmentRef, error) {
+	atts, err := a.uploadSvc.GetAttachments(targetType, targetID)
+	if err != nil {
+		return nil, err
+	}
+	return toAttachmentRefs(atts), nil
+}
+
+func toAttachmentRefs(atts []upload.Attachment) []forum.AttachmentRef {
+	if len(atts) == 0 {
+		return nil
+	}
+	out := make([]forum.AttachmentRef, 0, len(atts))
+	for _, a := range atts {
+		out = append(out, forum.AttachmentRef{
+			ID:       a.ID,
+			FileName: a.FileName,
+			FileSize: a.FileSize,
+			MIMEType: a.MIMEType,
+			URL:      a.URL,
+			Width:    a.Width,
+			Height:   a.Height,
+		})
+	}
+	return out
 }
