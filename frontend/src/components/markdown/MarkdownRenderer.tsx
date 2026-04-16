@@ -3,19 +3,31 @@ import remarkGfm from "remark-gfm";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeHighlight from "rehype-highlight";
 import Link from "next/link";
+import { useState } from "react";
 import { CodeBlock } from "./CodeBlock";
 import "./markdown-highlight.css";
 
 const sanitizeSchema = {
   ...defaultSchema,
+  tagNames: [
+    ...(defaultSchema.tagNames ?? []),
+    "video",
+    "source",
+  ],
   attributes: {
     ...defaultSchema.attributes,
     code: [...(defaultSchema.attributes?.code ?? []), ["className"]],
     span: [...(defaultSchema.attributes?.span ?? []), ["className"]],
+    video: ["src", "controls", "width", "height", "preload", "muted", "autoplay", "loop"],
+    source: ["src", "type"],
   },
 };
 
 const MENTION_REGEX = /(@[A-Za-z][A-Za-z0-9_-]*)/g;
+
+function isVideoUrl(url: string): boolean {
+  return /\.(mp4|webm|mov|ogg)(\?.*)?$/i.test(url);
+}
 
 function renderMentions(text: string): React.ReactNode[] {
   const parts = text.split(MENTION_REGEX);
@@ -38,8 +50,23 @@ function renderMentions(text: string): React.ReactNode[] {
 }
 
 export function MarkdownRenderer({ content }: { content: string }) {
+  const [lightbox, setLightbox] = useState<string | null>(null);
+
   return (
     <div className="redup-md text-[15px] leading-relaxed text-foreground">
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setLightbox(null)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={lightbox}
+            alt=""
+            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
+          />
+        </div>
+      )}
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeSanitize, sanitizeSchema], rehypeHighlight]}
@@ -93,16 +120,26 @@ export function MarkdownRenderer({ content }: { content: string }) {
             );
           },
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
-          img: ({ src, alt }) =>
-            src ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={src}
-                alt={alt ?? ""}
-                loading="lazy"
-                className="my-4 max-h-[520px] rounded-lg border border-border object-contain"
-              />
-            ) : null,
+          img: ({ src, alt }) => {
+            if (!src || typeof src !== "string") return null;
+            return isVideoUrl(src) ? (
+                <video
+                  src={src}
+                  controls
+                  preload="metadata"
+                  className="my-4 max-h-[520px] rounded-lg border border-border"
+                />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={src}
+                  alt={alt ?? ""}
+                  loading="lazy"
+                  className="my-4 max-h-[520px] cursor-zoom-in rounded-lg border border-border object-contain hover:opacity-90"
+                  onClick={() => setLightbox(src)}
+                />
+              );
+          },
           input: ({ type, checked, disabled }) =>
             type === "checkbox" ? (
               <input

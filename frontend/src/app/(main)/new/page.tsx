@@ -6,6 +6,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { MarkdownEditor } from "@/components/markdown/MarkdownEditor";
 import { createTopic, listCategories, type ServerCategory } from "@/lib/api/forum";
 import { listBots } from "@/lib/api/bot";
+import type { ServerAttachment } from "@/lib/api/upload";
 import { APIError } from "@/lib/api-client";
 import { useAuthStore } from "@/store/auth";
 
@@ -40,6 +41,7 @@ function NewTopicInner() {
   // Tri-state: null = still checking, true/false once the listBots call
   // has resolved. Used to gate topic creation in bot-type categories.
   const [hasActiveBot, setHasActiveBot] = useState<boolean | null>(null);
+  const [attachmentIds, setAttachmentIds] = useState<number[]>([]);
   // submittingRef is the authoritative lock: React batches setLoading, so a
   // rapid double-click can both read loading===false and both start fetching.
   // A plain ref updates synchronously and prevents the second call entirely.
@@ -92,6 +94,10 @@ function NewTopicInner() {
     setTags(tags.filter((x) => x !== t));
   }
 
+  function handleAttachmentsChange(atts: ServerAttachment[]) {
+    setAttachmentIds(atts.map((a) => a.id));
+  }
+
   const canSubmit =
     !!user &&
     [...title.trim()].length >= 2 &&
@@ -112,6 +118,7 @@ function NewTopicInner() {
         body: body.trim(),
         is_anon: anon || isAnonCategory,
         min_read_level: minReadLevel,
+        attachment_ids: attachmentIds.length > 0 ? attachmentIds : undefined,
       });
       router.push(`/topic/${topic.id}`);
     } catch (err) {
@@ -247,6 +254,7 @@ function NewTopicInner() {
             onChange={setBody}
             placeholder="支持 Markdown：# 标题 **粗体** `代码` [链接](url)，输入 @ 可召唤 Bot…"
             minHeight={320}
+            onAttachmentsChange={handleAttachmentsChange}
           />
         </div>
 

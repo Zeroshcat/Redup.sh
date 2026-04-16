@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"log"
 	"os"
 	"strconv"
@@ -24,6 +25,9 @@ type Config struct {
 	BotEnabled    bool
 	BotTimeoutSec int
 	BotMaxContext int
+
+	UploadDir      string
+	UploadMaxBytes int64
 
 	SentryDSN         string
 	SentryEnvironment string
@@ -52,6 +56,9 @@ func Load() *Config {
 		BotTimeoutSec: envInt("BOT_TIMEOUT_SEC", 15),
 		BotMaxContext: envInt("BOT_MAX_CONTEXT", 20),
 
+		UploadDir:      envStr("UPLOAD_DIR", "./uploads"),
+		UploadMaxBytes: int64(envInt("UPLOAD_MAX_BYTES", 20<<20)),
+
 		// NOTE: LLM provider credentials (OpenAI, Anthropic, DeepSeek, …)
 		// live in site_settings.llm and are managed exclusively from
 		// /admin/site → LLM 提供方. There are intentionally no env vars
@@ -61,6 +68,21 @@ func Load() *Config {
 		SentryDSN:         envStr("SENTRY_DSN", ""),
 		SentryEnvironment: envStr("SENTRY_ENVIRONMENT", "development"),
 	}
+}
+
+// Validate checks that production-critical settings are properly
+// configured. Returns an error when GinMode is "release" but secrets are
+// still at their default development values.
+func (c *Config) Validate() error {
+	if c.GinMode == "release" {
+		if c.JWTAccessSecret == "dev-access-secret" {
+			return errors.New("JWT_ACCESS_SECRET must be changed from default in release mode")
+		}
+		if c.JWTRefreshSecret == "dev-refresh-secret" {
+			return errors.New("JWT_REFRESH_SECRET must be changed from default in release mode")
+		}
+	}
+	return nil
 }
 
 func envBool(key string, fallback bool) bool {

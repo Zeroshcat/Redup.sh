@@ -23,6 +23,7 @@ import (
 	redisx "github.com/redup/backend/internal/redis"
 	"github.com/redup/backend/internal/report"
 	"github.com/redup/backend/internal/translation"
+	"github.com/redup/backend/internal/upload"
 	"github.com/redup/backend/internal/user"
 )
 
@@ -40,7 +41,10 @@ type App struct {
 // expected to own gin mode setup (gin.SetMode) before calling this —
 // New respects whatever the caller configured.
 func New(cfg *config.Config) (*App, error) {
-	database := db.Open(cfg.DatabaseURL)
+	database, err := db.Open(cfg.DatabaseURL)
+	if err != nil {
+		return nil, err
+	}
 	if err := database.AutoMigrate(
 		&user.User{},
 		&forum.Category{},
@@ -65,6 +69,7 @@ func New(cfg *config.Config) (*App, error) {
 		&messaging.Conversation{},
 		&messaging.Message{},
 		&announcement.Announcement{},
+		&upload.Attachment{},
 		&llm.CallLog{},
 	); err != nil {
 		return nil, err

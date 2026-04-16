@@ -87,6 +87,11 @@ func mountRoutes(s *services) *gin.Engine {
 	mountAuthedAPI(r, s)
 	mountAdminAPI(r, s)
 
+	// Static file serving for uploads — mounted on the raw engine so it
+	// bypasses the global body limit. Serves files from the upload directory
+	// to anyone (attachments must be visible to all visitors).
+	s.uploadHandler.RegisterPublic(r)
+
 	return r
 }
 
@@ -126,6 +131,13 @@ func mountAuthedAPI(r *gin.Engine, s *services) {
 	s.creditsHandler.Register(authed)
 	s.translationHandler.Register(authed)
 	s.messagingHandler.Register(authed)
+
+	// Upload route needs a larger body limit than the global 1 MiB cap.
+	// We mount it on a separate subgroup with its own BodyLimit middleware.
+	uploadGroup := api.Group("")
+	uploadGroup.Use(auth.RequireAuth(s.jwtMgr))
+	uploadGroup.Use(httpx.BodyLimit(s.cfg.UploadMaxBytes))
+	s.uploadHandler.Register(uploadGroup)
 }
 
 // mountAdminAPI attaches the `/api/admin` group, which requires a valid

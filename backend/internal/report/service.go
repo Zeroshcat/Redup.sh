@@ -2,6 +2,7 @@ package report
 
 import (
 	"errors"
+	"log"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -221,7 +222,9 @@ func (s *Service) handle(id int64, status string, in HandleInput) (*Report, erro
 		// itself, but we capture it in the note so the admin can see it.
 		if err := s.penalizer.PenalizeReportTarget(rep.TargetType, rep.TargetID, in.CreditScoreDelta); err != nil {
 			rep.ResolutionNote = strings.TrimSpace(rep.ResolutionNote+" [credit penalty failed: "+err.Error()+"]")
-			_ = s.repo.UpdateStatus(rep)
+			if updateErr := s.repo.UpdateStatus(rep); updateErr != nil {
+				log.Printf("report: failed to save penalty note: report=%d err=%v", rep.ID, updateErr)
+			}
 		}
 	}
 	if s.notifier != nil && rep.ReporterUserID != 0 {

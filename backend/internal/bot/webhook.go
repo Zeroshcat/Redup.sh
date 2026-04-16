@@ -51,6 +51,11 @@ type WebhookReply struct {
 	Error string `json:"error,omitempty"`
 }
 
+// maxWebhookResponseBody caps how many bytes we read from a bot webhook
+// response. Without this a malicious or buggy bot backend could exhaust
+// server memory by returning gigabytes.
+const maxWebhookResponseBody int64 = 1 << 20 // 1 MB
+
 // HTTPWebhookClient is the default implementation: POST JSON, optional
 // Authorization: Bearer <api_key> header, parse `{reply}`.
 //
@@ -140,7 +145,7 @@ func (c *HTTPWebhookClient) Deliver(ctx context.Context, webhookURL, apiKey stri
 		return "", err
 	}
 	defer res.Body.Close()
-	raw, _ := io.ReadAll(res.Body)
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, maxWebhookResponseBody))
 	if res.StatusCode >= 400 {
 		return "", fmt.Errorf("webhook %d: %s", res.StatusCode, truncForLog(raw, 200))
 	}

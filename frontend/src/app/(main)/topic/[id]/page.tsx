@@ -24,7 +24,11 @@ export default async function TopicPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const detail = await fetchTopicDetail(Number(id));
+  const numId = Number(id);
+  if (!Number.isFinite(numId) || numId <= 0 || !Number.isInteger(numId)) {
+    notFound();
+  }
+  const detail = await fetchTopicDetail(numId);
 
   if (!detail) notFound();
 

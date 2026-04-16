@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { APIError } from "@/lib/api-client";
 import { InboxAnnouncements } from "@/components/notification/InboxAnnouncements";
 import {
@@ -54,7 +54,7 @@ export default function NotificationsPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [error, setError] = useState<string | null>(null);
 
-  async function reload() {
+  const reload = useCallback(async () => {
     try {
       const params: { type?: NotificationKind; unread?: boolean } = {};
       if (filter === "unread") params.unread = true;
@@ -66,12 +66,11 @@ export default function NotificationsPage() {
       if (err instanceof APIError) setError(`${err.message} (req ${err.requestId})`);
       else setError("请求失败");
     }
-  }
+  }, [filter]);
 
   useEffect(() => {
     reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter]);
+  }, [reload]);
 
   const list = items ?? [];
   const unreadCount = list.filter((n) => !n.read).length;

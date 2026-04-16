@@ -131,8 +131,8 @@ func (h *Handler) adminList(c *gin.Context) {
 		Search: c.Query("search"),
 		Role:   c.Query("role"),
 		Status: c.Query("status"),
-		Limit:  atoiOrDefault(c.Query("limit"), 50),
-		Offset: atoiOrDefault(c.Query("offset"), 0),
+		Limit:  httpx.AtoiOr(c.Query("limit"), 50),
+		Offset: httpx.AtoiOr(c.Query("offset"), 0),
 	}
 	items, total, err := h.svc.List(opts)
 	if err != nil {
@@ -146,17 +146,6 @@ func (h *Handler) adminList(c *gin.Context) {
 		out = append(out, p)
 	}
 	httpx.OK(c, AdminUserListResp{Items: out, Total: total})
-}
-
-func atoiOrDefault(s string, def int) int {
-	if s == "" {
-		return def
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return def
-	}
-	return n
 }
 
 func (h *Handler) adminBan(c *gin.Context) {

@@ -122,7 +122,7 @@ func (h *Handler) feed(c *gin.Context) {
 		httpx.Unauthorized(c, "auth required")
 		return
 	}
-	limit := atoiOr(c.Query("limit"), 50)
+	limit := httpx.AtoiOr(c.Query("limit"), 50)
 	if limit > 100 {
 		limit = 100
 	}
@@ -140,7 +140,7 @@ func (h *Handler) feed(c *gin.Context) {
 
 func (h *Handler) search(c *gin.Context) {
 	q := c.Query("q")
-	limit := atoiOr(c.Query("limit"), 30)
+	limit := httpx.AtoiOr(c.Query("limit"), 30)
 	if limit > 50 {
 		limit = 50
 	}
@@ -175,14 +175,14 @@ func (h *Handler) categoryBySlug(c *gin.Context) {
 }
 
 func (h *Handler) listTopics(c *gin.Context) {
-	limit := atoiOr(c.Query("limit"), 30)
+	limit := httpx.AtoiOr(c.Query("limit"), 30)
 	if limit < 1 {
 		limit = 30
 	}
 	if limit > 100 {
 		limit = 100
 	}
-	offset := atoiOr(c.Query("offset"), 0)
+	offset := httpx.AtoiOr(c.Query("offset"), 0)
 	if offset < 0 {
 		offset = 0
 	}
@@ -267,7 +267,7 @@ func (h *Handler) userTopics(c *gin.Context) {
 		httpx.NotFound(c, "user not found")
 		return
 	}
-	items, err := h.svc.ListTopicsByUserID(ref.ID, atoiOr(c.Query("limit"), 30))
+	items, err := h.svc.ListTopicsByUserID(ref.ID, httpx.AtoiOr(c.Query("limit"), 30))
 	if err != nil {
 		httpx.Internal(c, err.Error())
 		return
@@ -281,7 +281,7 @@ func (h *Handler) userPosts(c *gin.Context) {
 		httpx.NotFound(c, "user not found")
 		return
 	}
-	items, err := h.svc.ListPostsByUserID(ref.ID, atoiOr(c.Query("limit"), 30))
+	items, err := h.svc.ListPostsByUserID(ref.ID, httpx.AtoiOr(c.Query("limit"), 30))
 	if err != nil {
 		httpx.Internal(c, err.Error())
 		return
@@ -290,11 +290,12 @@ func (h *Handler) userPosts(c *gin.Context) {
 }
 
 type createTopicReq struct {
-	Category     string `json:"category" binding:"required"`
-	Title        string `json:"title" binding:"required"`
-	Body         string `json:"body" binding:"required"`
-	IsAnon       bool   `json:"is_anon"`
-	MinReadLevel int16  `json:"min_read_level"`
+	Category      string  `json:"category" binding:"required"`
+	Title         string  `json:"title" binding:"required"`
+	Body          string  `json:"body" binding:"required"`
+	IsAnon        bool    `json:"is_anon"`
+	MinReadLevel  int16   `json:"min_read_level"`
+	AttachmentIDs []int64 `json:"attachment_ids"`
 }
 
 func (h *Handler) createTopic(c *gin.Context) {
@@ -305,12 +306,13 @@ func (h *Handler) createTopic(c *gin.Context) {
 	}
 	uid, _ := auth.CurrentUserID(c)
 	t, err := h.svc.CreateTopic(CreateTopicInput{
-		UserID:       uid,
-		CategorySlug: req.Category,
-		Title:        req.Title,
-		Body:         req.Body,
-		IsAnon:       req.IsAnon,
-		MinReadLevel: req.MinReadLevel,
+		UserID:        uid,
+		CategorySlug:  req.Category,
+		Title:         req.Title,
+		Body:          req.Body,
+		IsAnon:        req.IsAnon,
+		MinReadLevel:  req.MinReadLevel,
+		AttachmentIDs: req.AttachmentIDs,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -320,8 +322,9 @@ func (h *Handler) createTopic(c *gin.Context) {
 }
 
 type createPostReq struct {
-	Content      string `json:"content" binding:"required"`
-	ReplyToFloor *int   `json:"reply_to_floor,omitempty"`
+	Content       string  `json:"content" binding:"required"`
+	ReplyToFloor  *int    `json:"reply_to_floor,omitempty"`
+	AttachmentIDs []int64 `json:"attachment_ids"`
 }
 
 func (h *Handler) createPost(c *gin.Context) {
@@ -337,10 +340,11 @@ func (h *Handler) createPost(c *gin.Context) {
 	}
 	uid, _ := auth.CurrentUserID(c)
 	p, err := h.svc.CreatePost(CreatePostInput{
-		TopicID:      id,
-		UserID:       uid,
-		Content:      req.Content,
-		ReplyToFloor: req.ReplyToFloor,
+		TopicID:       id,
+		UserID:        uid,
+		Content:       req.Content,
+		ReplyToFloor:  req.ReplyToFloor,
+		AttachmentIDs: req.AttachmentIDs,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -732,15 +736,4 @@ func (h *Handler) adminMoveCategory(c *gin.Context) {
 		Detail:      "direction=" + req.Direction,
 	})
 	httpx.NoContent(c)
-}
-
-func atoiOr(s string, fallback int) int {
-	if s == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return fallback
-	}
-	return n
 }

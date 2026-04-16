@@ -33,7 +33,12 @@ export default async function HomePage({
   } catch {
     backendDown = true;
   }
-  const announcements = await fetchActiveAnnouncements("home_card");
+  let announcements: Awaited<ReturnType<typeof fetchActiveAnnouncements>> = [];
+  try {
+    announcements = await fetchActiveAnnouncements("home_card");
+  } catch {
+    // announcements are non-critical; show page without them
+  }
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 gap-6 px-4 py-6">

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"log"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/redup/backend/internal/skills"
 	"github.com/redup/backend/internal/stream"
 	"github.com/redup/backend/internal/translation"
+	"github.com/redup/backend/internal/upload"
 	"github.com/redup/backend/internal/user"
 
 	redis "github.com/redis/go-redis/v9"
@@ -67,6 +69,7 @@ type services struct {
 	reportSvc      *report.Service
 	forumSvc       *forum.Service
 	announcementSvc *announcement.Service
+	uploadSvc       *upload.Service
 	skillHandler   *skills.Handler
 
 	// Handlers
@@ -86,6 +89,7 @@ type services struct {
 	forumHandler        *forum.Handler
 	streamHandler       *stream.Handler
 	announcementHandler *announcement.Handler
+	uploadHandler       *upload.Handler
 	anonAdminHandler    *anon.Handler
 }
 
@@ -114,7 +118,7 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 	// --- user ---
 	userRepo := user.NewRepository(database)
 	if promoted, err := userRepo.EnsureAdminExists(); err != nil {
-		log.Fatalf("admin bootstrap failed: %v", err)
+		return nil, fmt.Errorf("admin bootstrap: %w", err)
 	} else if promoted {
 		log.Println("no admin found — promoted earliest user to admin")
 	}
@@ -134,7 +138,7 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 	siteRepo := site.NewRepository(database)
 	s.siteSvc = site.NewService(siteRepo)
 	if err := s.siteSvc.SeedDefaults(); err != nil {
-		log.Fatalf("site seed failed: %v", err)
+		return nil, fmt.Errorf("site seed: %w", err)
 	}
 	if savedAnon, err := s.siteSvc.GetAnon(); err == nil && savedAnon.Prefix != "" {
 		s.anonGen.SetPrefix(savedAnon.Prefix)
@@ -263,7 +267,7 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 	// --- forum (depends on anon, filter, moderator, site, bot ownership) ---
 	forumRepo := forum.NewRepository(database)
 	if err := forumRepo.SeedDefaultCategories(); err != nil {
-		log.Fatalf("category seed failed: %v", err)
+		return nil, fmt.Errorf("category seed: %w", err)
 	}
 	s.forumSvc = forum.NewService(forumRepo, s.anonSvc)
 	s.forumSvc.SetNotifier(&forumNotifyAdapter{notif: s.notifSvc})
@@ -288,6 +292,7 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 		MaxContext: cfg.BotMaxContext,
 	})
 	s.forumSvc.SetBotTrigger(s.botSvc)
+	s.forumSvc.SetAttachmentBinder(&forumAttachmentAdapter{uploadSvc: s.uploadSvc})
 
 	s.forumHandler = forum.NewHandler(s.forumSvc, s.jwtMgr)
 
@@ -302,6 +307,14 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 
 	// --- skills (bot reverse-call API) ---
 	s.skillHandler = skills.NewHandler(s.botSvc, s.forumSvc, s.auditSvc)
+
+	// --- upload ---
+	uploadRepo := upload.NewRepository(database)
+	uploadCfg := upload.DefaultConfig()
+	uploadCfg.UploadDir = cfg.UploadDir
+	uploadCfg.MaxFileSize = cfg.UploadMaxBytes
+	s.uploadSvc = upload.NewService(uploadRepo, uploadCfg)
+	s.uploadHandler = upload.NewHandler(s.uploadSvc, s.jwtMgr)
 
 	// Audit recorders into every admin handler before routes mount. We
 	// do it here (not in routes.go) so the wiring stays next to the

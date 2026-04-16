@@ -17,7 +17,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canSubmit = account.trim().length > 0 && password.length >= 6;
+  const canSubmit = account.trim().length > 0 && password.length >= 8;
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -85,7 +85,7 @@ export default function LoginPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="至少 6 位"
+              placeholder="至少 8 位"
               autoComplete="current-password"
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
             />

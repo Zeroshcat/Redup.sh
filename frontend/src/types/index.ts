@@ -68,6 +68,7 @@ export interface Topic {
   likeCount: number;
   viewCount: number;
   createdAt: string;
+  updatedAt?: string;
   editedAt?: string;
   minReadLevel?: number;
   lastPostAt: string;

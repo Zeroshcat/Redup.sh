@@ -24,6 +24,10 @@ import (
 func main() {
 	cfg := config.Load()
 
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("config validation failed: %v", err)
+	}
+
 	// Sentry is opt-in via SENTRY_DSN. Silent when unset so local dev
 	// doesn't spew "sentry not configured" warnings on every boot.
 	if cfg.SentryDSN != "" {

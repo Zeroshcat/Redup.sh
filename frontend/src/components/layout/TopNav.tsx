@@ -8,10 +8,12 @@ import { fetchActiveAnnouncements } from "@/lib/api/announcements";
 import { fetchPublicSite } from "@/lib/api/site";
 
 export async function TopNav() {
-  const [siteInfo, banners] = await Promise.all([
+  const [siteInfoResult, bannersResult] = await Promise.allSettled([
     fetchPublicSite(),
     fetchActiveAnnouncements("top_banner"),
   ]);
+  const siteInfo = siteInfoResult.status === "fulfilled" ? siteInfoResult.value : null;
+  const banners = bannersResult.status === "fulfilled" ? bannersResult.value : [];
   const siteName = siteInfo?.name ?? "Redup";
   const initial = siteName[0]?.toUpperCase() ?? "R";
 

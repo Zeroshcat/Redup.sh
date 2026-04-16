@@ -123,6 +123,14 @@ type BotTrigger interface {
 	AsyncTrigger(topicID, sourcePostID, triggerUserID int64, content string)
 }
 
+// AttachmentBinder is the narrow interface forum uses to bind uploaded
+// attachments to a topic or post. Returns the resolved attachment refs so
+// the handler can include them in the API response.
+type AttachmentBinder interface {
+	BindToTarget(ids []int64, targetType string, targetID int64, userID int64) ([]AttachmentRef, error)
+	GetForTarget(targetType string, targetID int64) ([]AttachmentRef, error)
+}
+
 // Notifier is the narrow interface forum needs to emit notifications when a
 // reply or like targets another user. Wired by main.go and may be nil in tests.
 type Notifier interface {
@@ -176,6 +184,7 @@ type Service struct {
 	moderator    Moderator
 	editWindow   EditWindowSource
 	botOwnership BotOwnershipChecker
+	attBinder    AttachmentBinder
 }
 
 func NewService(repo *Repository, anon AnonAssigner) *Service {
@@ -189,6 +198,7 @@ func (s *Service) SetContentFilter(f ContentFilter)   { s.filter = f }
 func (s *Service) SetModerator(m Moderator)           { s.moderator = m }
 func (s *Service) SetEditWindow(e EditWindowSource)   { s.editWindow = e }
 func (s *Service) SetBotOwnership(b BotOwnershipChecker) { s.botOwnership = b }
+func (s *Service) SetAttachmentBinder(b AttachmentBinder)  { s.attBinder = b }
 
 // canEdit decides whether actor (role + id) may edit an entity owned by
 // ownerID that was created at createdAt. Admins / moderators with EditAny
@@ -748,6 +758,19 @@ func (s *Service) TopicDetail(id int64) (*Topic, []Post, error) {
 	}
 
 	_ = s.repo.IncrementTopicView(id) // best-effort
+
+	// Hydrate attachments for topic and posts.
+	if s.attBinder != nil {
+		if atts, err := s.attBinder.GetForTarget("topic", id); err == nil {
+			t.Attachments = atts
+		}
+		for i := range posts {
+			if atts, err := s.attBinder.GetForTarget("post", posts[i].ID); err == nil && len(atts) > 0 {
+				posts[i].Attachments = atts
+			}
+		}
+	}
+
 	return t, posts, nil
 }
 
@@ -921,12 +944,13 @@ func (s *Service) HydratePostsUserState(userID int64, posts []Post) error {
 }
 
 type CreateTopicInput struct {
-	UserID       int64
-	CategorySlug string
-	Title        string
-	Body         string
-	IsAnon       bool
-	MinReadLevel int16
+	UserID        int64
+	CategorySlug  string
+	Title         string
+	Body          string
+	IsAnon        bool
+	MinReadLevel  int16
+	AttachmentIDs []int64
 }
 
 func (s *Service) CreateTopic(in CreateTopicInput) (*Topic, error) {
@@ -1044,6 +1068,13 @@ func (s *Service) CreateTopic(in CreateTopicInput) (*Topic, error) {
 		go s.asyncModerateTopic(t.ID, t.UserID, t.Title, t.Body, c.Rules)
 	}
 
+	// Bind uploaded attachments to this topic.
+	if len(in.AttachmentIDs) > 0 && s.attBinder != nil {
+		if atts, err := s.attBinder.BindToTarget(in.AttachmentIDs, "topic", t.ID, in.UserID); err == nil {
+			t.Attachments = atts
+		}
+	}
+
 	return t, nil
 }
 
@@ -1128,10 +1159,11 @@ func (s *Service) PostsByTopic(topicID int64) ([]Post, error) {
 }
 
 type CreatePostInput struct {
-	TopicID      int64
-	UserID       int64
-	Content      string
-	ReplyToFloor *int
+	TopicID       int64
+	UserID        int64
+	Content       string
+	ReplyToFloor  *int
+	AttachmentIDs []int64
 }
 
 func (s *Service) CreatePost(in CreatePostInput) (*Post, error) {
@@ -1243,6 +1275,13 @@ func (s *Service) CreatePost(in CreatePostInput) (*Post, error) {
 			rules = cat.Rules
 		}
 		go s.asyncModeratePost(p.ID, in.UserID, content, t.Title, rules)
+	}
+
+	// Bind uploaded attachments to this post.
+	if len(in.AttachmentIDs) > 0 && s.attBinder != nil {
+		if atts, err := s.attBinder.BindToTarget(in.AttachmentIDs, "post", p.ID, in.UserID); err == nil {
+			p.Attachments = atts
+		}
 	}
 
 	return p, nil

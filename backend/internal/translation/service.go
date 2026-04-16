@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -208,14 +209,18 @@ func (s *Service) Translate(ctx context.Context, userID int64, source, targetLan
 	if err != nil {
 		// LLM failed AFTER charging — refund the user. Best-effort.
 		if charge > 0 {
-			_ = s.wallet.Charge(userID, -charge, KindTranslation, "translation_refund", 0, "翻译失败退款")
+			if refundErr := s.wallet.Charge(userID, -charge, KindTranslation, "translation_refund", 0, "翻译失败退款"); refundErr != nil {
+				log.Printf("translation refund failed: user=%d charge=%d err=%v", userID, charge, refundErr)
+			}
 		}
 		return nil, fmt.Errorf("%w: %v", ErrTranslateFailed, err)
 	}
 	translated = sanitizeTranslation(translated)
 	if translated == "" {
 		if charge > 0 {
-			_ = s.wallet.Charge(userID, -charge, KindTranslation, "translation_refund", 0, "翻译失败退款")
+			if refundErr := s.wallet.Charge(userID, -charge, KindTranslation, "translation_refund", 0, "翻译失败退款"); refundErr != nil {
+				log.Printf("translation refund failed: user=%d charge=%d err=%v", userID, charge, refundErr)
+			}
 		}
 		return nil, ErrTranslateFailed
 	}

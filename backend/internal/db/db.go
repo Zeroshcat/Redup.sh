@@ -1,7 +1,7 @@
 package db
 
 import (
-	"log"
+	"fmt"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -22,20 +22,20 @@ const (
 	defaultConnMaxIdle     = 30 * time.Minute
 )
 
-func Open(dsn string) *gorm.DB {
+func Open(dsn string) (*gorm.DB, error) {
 	database, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
 	})
 	if err != nil {
-		log.Fatalf("failed to connect database: %v", err)
+		return nil, fmt.Errorf("failed to connect database: %w", err)
 	}
 	sqlDB, err := database.DB()
 	if err != nil {
-		log.Fatalf("failed to get sql.DB handle: %v", err)
+		return nil, fmt.Errorf("failed to get sql.DB handle: %w", err)
 	}
 	sqlDB.SetMaxOpenConns(defaultMaxOpenConns)
 	sqlDB.SetMaxIdleConns(defaultMaxIdleConns)
 	sqlDB.SetConnMaxLifetime(defaultConnMaxLifetime)
 	sqlDB.SetConnMaxIdleTime(defaultConnMaxIdle)
-	return database
+	return database, nil
 }
