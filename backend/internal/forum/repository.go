@@ -2,10 +2,20 @@ package forum
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 )
+
+// escapeLike sanitizes user input for ILIKE queries by escaping the
+// wildcard characters %, _, and the escape character \ itself.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
 
 type Repository struct {
 	db *gorm.DB
@@ -420,6 +430,7 @@ func (r *Repository) SearchTopics(q string, limit int) ([]Topic, error) {
 	var items []Topic
 	tx := r.db.Where("deleted_at IS NULL")
 	if q != "" {
+		q = escapeLike(q)
 		tx = tx.Where("title ILIKE ?", "%"+q+"%")
 	}
 	err := tx.Order("created_at DESC").Limit(limit).Find(&items).Error

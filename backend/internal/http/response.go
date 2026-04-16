@@ -3,6 +3,7 @@ package http
 import (
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -124,4 +125,17 @@ func Internal(c *gin.Context, detail string) {
 
 func TooManyRequests(c *gin.Context, message string) {
 	Fail(c, http.StatusTooManyRequests, CodeRateLimited, message)
+}
+
+// AtoiOr parses s as an integer. Returns def when s is empty or not a valid
+// integer. Shared by handler packages to avoid per-package duplication.
+func AtoiOr(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return n
 }
