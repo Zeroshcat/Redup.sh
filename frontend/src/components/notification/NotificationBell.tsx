@@ -7,6 +7,7 @@ import {
   listNotifications,
   markAllNotificationsRead,
   markNotificationRead,
+  notificationHref,
   type ServerNotification,
 } from "@/lib/api/notifications";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -30,13 +31,6 @@ const ICON_BG: Record<string, string> = {
   follow: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
   system: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
 };
-
-function notificationHref(n: ServerNotification): string {
-  if (n.target_type === "topic" || n.target_type === "post") {
-    return n.target_id ? `/topic/${n.target_id}` : "/notifications";
-  }
-  return "/notifications";
-}
 
 export function NotificationBell() {
   const isAuthed = useAuthStore((s) => Boolean(s.user));

@@ -71,6 +71,7 @@ func (a *forumNotifyAdapter) NotifyReply(
 	actorUsername string, actorIsAnon bool,
 	targetType string, targetID int64,
 	targetTitle, preview string,
+	topicID int64, postFloor int,
 ) {
 	a.notif.Notify(notification.Input{
 		RecipientID:   recipientID,
@@ -81,6 +82,8 @@ func (a *forumNotifyAdapter) NotifyReply(
 		TargetType:    targetType,
 		TargetID:      targetID,
 		TargetTitle:   targetTitle,
+		TopicID:       topicID,
+		PostFloor:     postFloor,
 		Text:          "回复了你",
 		Preview:       preview,
 	})
@@ -91,6 +94,7 @@ func (a *forumNotifyAdapter) NotifyLike(
 	actorUsername string,
 	targetType string, targetID int64,
 	targetTitle string,
+	topicID int64, postFloor int,
 ) {
 	text := "点赞了你的主题"
 	if targetType == "post" {
@@ -104,6 +108,8 @@ func (a *forumNotifyAdapter) NotifyLike(
 		TargetType:    targetType,
 		TargetID:      targetID,
 		TargetTitle:   targetTitle,
+		TopicID:       topicID,
+		PostFloor:     postFloor,
 		Text:          text,
 	})
 }
@@ -113,6 +119,7 @@ func (a *forumNotifyAdapter) NotifyMention(
 	actorUsername string, actorIsAnon bool,
 	targetType string, targetID int64,
 	targetTitle, preview string,
+	topicID int64, postFloor int,
 ) {
 	a.notif.Notify(notification.Input{
 		RecipientID:   recipientID,
@@ -123,6 +130,8 @@ func (a *forumNotifyAdapter) NotifyMention(
 		TargetType:    targetType,
 		TargetID:      targetID,
 		TargetTitle:   targetTitle,
+		TopicID:       topicID,
+		PostFloor:     postFloor,
 		Text:          "在帖子里 @ 了你",
 		Preview:       preview,
 	})
@@ -132,6 +141,7 @@ func (a *forumNotifyAdapter) NotifyModerationHidden(
 	recipientID int64,
 	targetType string, targetID int64,
 	targetTitle, reason string,
+	topicID int64, postFloor int,
 ) {
 	text := "你的主题被 AI 审核隐藏"
 	if targetType == "post" {
@@ -143,6 +153,8 @@ func (a *forumNotifyAdapter) NotifyModerationHidden(
 		TargetType:  targetType,
 		TargetID:    targetID,
 		TargetTitle: targetTitle,
+		TopicID:     topicID,
+		PostFloor:   postFloor,
 		Text:        text,
 		Preview:     reason,
 	})

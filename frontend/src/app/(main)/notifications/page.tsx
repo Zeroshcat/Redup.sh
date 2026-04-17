@@ -8,6 +8,7 @@ import {
   listNotifications,
   markAllNotificationsRead,
   markNotificationRead,
+  notificationHref,
   type NotificationKind,
   type ServerNotification,
 } from "@/lib/api/notifications";
@@ -41,13 +42,6 @@ const ICON_BG: Record<NotificationKind, string> = {
   follow: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
   system: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
 };
-
-function notificationHref(n: ServerNotification): string {
-  if (n.target_type === "topic" || n.target_type === "post") {
-    return n.target_id ? `/topic/${n.target_id}` : "#";
-  }
-  return "#";
-}
 
 export default function NotificationsPage() {
   const [items, setItems] = useState<ServerNotification[] | null>(null);

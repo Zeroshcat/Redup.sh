@@ -125,18 +125,28 @@ type BotTrigger interface {
 
 // Notifier is the narrow interface forum needs to emit notifications when a
 // reply or like targets another user. Wired by main.go and may be nil in tests.
+//
+// topicID + postFloor on every signature are what the frontend uses to build
+// the click-through URL (/topic/{topicID}#floor-{postFloor}). Callers MUST
+// pass topicID for every notification — leaving it zero yields a dead link.
+// postFloor is zero for topic-scoped notifications and equal to the reply's
+// floor number for post-scoped ones.
 type Notifier interface {
 	NotifyReply(recipientID, actorID int64, actorUsername string, actorIsAnon bool,
-		targetType string, targetID int64, targetTitle, preview string)
+		targetType string, targetID int64, targetTitle, preview string,
+		topicID int64, postFloor int)
 	NotifyLike(recipientID, actorID int64, actorUsername string,
-		targetType string, targetID int64, targetTitle string)
+		targetType string, targetID int64, targetTitle string,
+		topicID int64, postFloor int)
 	NotifyMention(recipientID, actorID int64, actorUsername string, actorIsAnon bool,
-		targetType string, targetID int64, targetTitle, preview string)
+		targetType string, targetID int64, targetTitle, preview string,
+		topicID int64, postFloor int)
 	// NotifyModerationHidden fires after async AI moderation removes the
 	// author's own content. targetType is "topic" or "post"; reason
 	// carries the moderator's rejection text so the author can see why.
 	NotifyModerationHidden(recipientID int64, targetType string, targetID int64,
-		targetTitle, reason string)
+		targetTitle, reason string,
+		topicID int64, postFloor int)
 }
 
 // mentionRegexp matches @username tokens in user-generated content. The
@@ -653,6 +663,7 @@ func (s *Service) PostBotReply(topicID, botID, ownerUserID int64, content string
 		s.notifier.NotifyReply(
 			t.UserID, ownerUserID, "", false,
 			"topic", t.ID, t.Title, truncateRunes(content, 120),
+			t.ID, p.Floor,
 		)
 	}
 	return nil
@@ -820,7 +831,7 @@ func (s *Service) ToggleTopicLike(userID, topicID int64) (bool, int, error) {
 			if actor != nil {
 				actorName = actor.Username
 			}
-			s.notifier.NotifyLike(t.UserID, userID, actorName, "topic", t.ID, t.Title)
+			s.notifier.NotifyLike(t.UserID, userID, actorName, "topic", t.ID, t.Title, t.ID, 0)
 		}
 		if s.credits != nil {
 			s.credits.AwardLikeReceived(t.UserID, "topic", t.ID, userID, "主题被点赞")
@@ -846,7 +857,7 @@ func (s *Service) TogglePostLike(userID, postID int64) (bool, int, error) {
 			if actor != nil {
 				actorName = actor.Username
 			}
-			s.notifier.NotifyLike(p.UserID, userID, actorName, "post", p.ID, title)
+			s.notifier.NotifyLike(p.UserID, userID, actorName, "post", p.ID, title, p.TopicID, p.Floor)
 		}
 		if s.credits != nil {
 			s.credits.AwardLikeReceived(p.UserID, "post", p.ID, userID, "回帖被点赞")
@@ -1022,7 +1033,7 @@ func (s *Service) CreateTopic(in CreateTopicInput) (*Topic, error) {
 		}
 	}
 
-	s.fanoutMentions(t.UserID, in.UserID, isAnon, t.TopicAnonID, body, "topic", t.ID, t.Title)
+	s.fanoutMentions(t.UserID, in.UserID, isAnon, t.TopicAnonID, body, "topic", t.ID, t.Title, t.ID, 0)
 
 	if s.botTrigger != nil && !isAnon {
 		s.botTrigger.AsyncTrigger(t.ID, 0, in.UserID, t.Title+"\n\n"+body)
@@ -1071,7 +1082,7 @@ func (s *Service) asyncModerateTopic(topicID, authorID int64, title, body, rules
 		return
 	}
 	if s.notifier != nil && authorID != 0 {
-		s.notifier.NotifyModerationHidden(authorID, "topic", topicID, title, result.Reason)
+		s.notifier.NotifyModerationHidden(authorID, "topic", topicID, title, result.Reason, topicID, 0)
 	}
 }
 
@@ -1084,6 +1095,7 @@ func (s *Service) fanoutMentions(
 	actorAnonID string,
 	content string,
 	targetType string, targetID int64, targetTitle string,
+	topicID int64, postFloor int,
 ) {
 	if s.notifier == nil {
 		return
@@ -1117,6 +1129,7 @@ func (s *Service) fanoutMentions(
 		s.notifier.NotifyMention(
 			u.ID, actorID, actorName, actorIsAnon,
 			targetType, targetID, targetTitle, preview,
+			topicID, postFloor,
 		)
 	}
 }
@@ -1197,11 +1210,15 @@ func (s *Service) CreatePost(in CreatePostInput) (*Post, error) {
 		}
 		preview := truncateRunes(content, 120)
 
-		// Notify the topic owner of a new reply.
+		// Notify the topic owner of a new reply. Route them to the new
+		// reply's floor rather than the top of the thread — keeps the
+		// "jump to the thing that just happened" invariant consistent
+		// across reply / like / mention notifications.
 		if t.UserID != 0 && t.UserID != in.UserID {
 			s.notifier.NotifyReply(
 				t.UserID, in.UserID, actorName, p.IsAnon,
 				"topic", t.ID, t.Title, preview,
+				t.ID, p.Floor,
 			)
 		}
 
@@ -1212,13 +1229,14 @@ func (s *Service) CreatePost(in CreatePostInput) (*Post, error) {
 					s.notifier.NotifyReply(
 						parent.UserID, in.UserID, actorName, p.IsAnon,
 						"post", p.ID, t.Title, preview,
+						t.ID, p.Floor,
 					)
 				}
 			}
 		}
 	}
 
-	s.fanoutMentions(t.UserID, in.UserID, p.IsAnon, p.AnonID, content, "post", p.ID, t.Title)
+	s.fanoutMentions(t.UserID, in.UserID, p.IsAnon, p.AnonID, content, "post", p.ID, t.Title, t.ID, p.Floor)
 
 	// Bot trigger: scan @botslug mentions and dispatch async LLM call. Skip
 	// bot-generated posts to avoid feedback loops, and skip anon boards (bots
@@ -1242,14 +1260,17 @@ func (s *Service) CreatePost(in CreatePostInput) (*Post, error) {
 		if cat != nil {
 			rules = cat.Rules
 		}
-		go s.asyncModeratePost(p.ID, in.UserID, content, t.Title, rules)
+		go s.asyncModeratePost(p.ID, t.ID, p.Floor, in.UserID, content, t.Title, rules)
 	}
 
 	return p, nil
 }
 
 // asyncModeratePost is the reply-side twin of asyncModerateTopic.
-func (s *Service) asyncModeratePost(postID, authorID int64, content, topicTitle, rules string) {
+// topicID + postFloor are threaded through so the moderation-hidden
+// notification routes to the exact floor, same as every other
+// post-scoped notification.
+func (s *Service) asyncModeratePost(postID, topicID int64, postFloor int, authorID int64, content, topicTitle, rules string) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("async post moderation panic: post=%d err=%v", postID, r)
@@ -1267,6 +1288,6 @@ func (s *Service) asyncModeratePost(postID, authorID int64, content, topicTitle,
 		return
 	}
 	if s.notifier != nil && authorID != 0 {
-		s.notifier.NotifyModerationHidden(authorID, "post", postID, topicTitle, result.Reason)
+		s.notifier.NotifyModerationHidden(authorID, "post", postID, topicTitle, result.Reason, topicID, postFloor)
 	}
 }

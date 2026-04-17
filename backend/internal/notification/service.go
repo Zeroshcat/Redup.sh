@@ -34,8 +34,15 @@ type Input struct {
 	TargetType    string
 	TargetID      int64
 	TargetTitle   string
-	Text          string
-	Preview       string
+	// TopicID + PostFloor together drive the click-through URL on
+	// the frontend — /topic/{TopicID}#floor-{PostFloor} if floor
+	// is non-zero, /topic/{TopicID} otherwise. TopicID must be
+	// set for any notification the user should be able to click
+	// into; leaving it zero yields a dead link.
+	TopicID   int64
+	PostFloor int
+	Text      string
+	Preview   string
 }
 
 // Notify is best-effort: producers should never let a notification failure
@@ -59,6 +66,8 @@ func (s *Service) Notify(in Input) {
 		TargetType:    in.TargetType,
 		TargetID:      in.TargetID,
 		TargetTitle:   in.TargetTitle,
+		TopicID:       in.TopicID,
+		PostFloor:     in.PostFloor,
 		Text:          in.Text,
 		Preview:       in.Preview,
 	}

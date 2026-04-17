@@ -12,6 +12,12 @@ export interface ServerNotification {
   target_type?: string;
   target_id?: number;
   target_title?: string;
+  // topic_id + post_floor are the authoritative routing fields — the
+  // frontend builds /topic/{topic_id}#floor-{post_floor} from them.
+  // target_id / target_type are kept only for display and legacy
+  // callers; clicking a notification should never key off target_id.
+  topic_id?: number;
+  post_floor?: number;
   text: string;
   preview?: string;
   read: boolean;
@@ -83,4 +89,17 @@ export function adminListNotifications(params: AdminListNotificationsParams = {}
 
 export function adminGetNotificationStats() {
   return api<{ items: NotificationTypeStat[] }>("/api/admin/notifications/stats");
+}
+
+// notificationHref turns a notification row into the exact URL the
+// user should land on when they click it. Routes always key off
+// topic_id (+ optional post_floor anchor); target_id is never used
+// here — it's a mix of topic_id and post_id depending on the source
+// event, which is why the old code mis-routed post-scoped clicks.
+// Legacy rows without topic_id collapse to /notifications so the
+// user at least sees their list instead of a dead link.
+export function notificationHref(n: ServerNotification): string {
+  if (!n.topic_id) return "/notifications";
+  const base = `/topic/${n.topic_id}`;
+  return n.post_floor ? `${base}#floor-${n.post_floor}` : base;
 }
