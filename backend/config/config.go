@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"log"
 	"os"
 	"strconv"
@@ -72,6 +73,21 @@ func Load() *Config {
 
 		LinkPreviewAllowCIDRs: envStr("LINKPREVIEW_ALLOW_CIDRS", ""),
 	}
+}
+
+// Validate checks that production-critical settings are properly
+// configured. Returns an error when GinMode is "release" but secrets are
+// still at their default development values.
+func (c *Config) Validate() error {
+	if c.GinMode == "release" {
+		if c.JWTAccessSecret == "dev-access-secret" {
+			return errors.New("JWT_ACCESS_SECRET must be changed from default in release mode")
+		}
+		if c.JWTRefreshSecret == "dev-refresh-secret" {
+			return errors.New("JWT_REFRESH_SECRET must be changed from default in release mode")
+		}
+	}
+	return nil
 }
 
 func envBool(key string, fallback bool) bool {

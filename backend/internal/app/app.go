@@ -41,7 +41,10 @@ type App struct {
 // expected to own gin mode setup (gin.SetMode) before calling this —
 // New respects whatever the caller configured.
 func New(cfg *config.Config) (*App, error) {
-	database := db.Open(cfg.DatabaseURL)
+	database, err := db.Open(cfg.DatabaseURL)
+	if err != nil {
+		return nil, err
+	}
 	if err := database.AutoMigrate(
 		&user.User{},
 		&forum.Category{},

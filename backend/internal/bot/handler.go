@@ -192,8 +192,8 @@ func (h *Handler) adminLogs(c *gin.Context) {
 	opts := CallLogListOptions{
 		Status:  c.Query("status"),
 		BotSlug: c.Query("bot_slug"),
-		Limit:   atoiOr(c.Query("limit"), 100),
-		Offset:  atoiOr(c.Query("offset"), 0),
+		Limit:   httpx.AtoiOr(c.Query("limit"), 100),
+		Offset:  httpx.AtoiOr(c.Query("offset"), 0),
 	}
 	items, total, err := h.svc.ListCalls(opts)
 	if err != nil {
@@ -242,8 +242,8 @@ func (req botReq) toInput() Input {
 
 func (h *Handler) list(c *gin.Context) {
 	opts := ListOptions{
-		Limit:  atoiOr(c.Query("limit"), 50),
-		Offset: atoiOr(c.Query("offset"), 0),
+		Limit:  httpx.AtoiOr(c.Query("limit"), 50),
+		Offset: httpx.AtoiOr(c.Query("offset"), 0),
 	}
 	items, total, err := h.svc.ListPublic(opts)
 	if err != nil {
@@ -332,8 +332,8 @@ func (h *Handler) deleteOwn(c *gin.Context) {
 func (h *Handler) adminList(c *gin.Context) {
 	opts := ListOptions{
 		Status: c.Query("status"),
-		Limit:  atoiOr(c.Query("limit"), 100),
-		Offset: atoiOr(c.Query("offset"), 0),
+		Limit:  httpx.AtoiOr(c.Query("limit"), 100),
+		Offset: httpx.AtoiOr(c.Query("offset"), 0),
 	}
 	items, total, err := h.svc.ListAdmin(opts)
 	if err != nil {
@@ -526,15 +526,4 @@ func (h *Handler) writeError(c *gin.Context, err error) {
 	default:
 		httpx.Internal(c, err.Error())
 	}
-}
-
-func atoiOr(s string, def int) int {
-	if s == "" {
-		return def
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return def
-	}
-	return n
 }

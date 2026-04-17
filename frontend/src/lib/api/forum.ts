@@ -43,6 +43,7 @@ export interface ServerTopic {
   like_count: number;
   last_post_at: string;
   created_at: string;
+  updated_at?: string;
   edited_at?: string;
   min_read_level?: number;
   user_liked?: boolean;

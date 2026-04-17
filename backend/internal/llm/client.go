@@ -141,6 +141,7 @@ func (r *Router) CompleteWithFeature(ctx context.Context, feature, provider, mod
 		if err != nil {
 			row.Status = CallStatusError
 			row.ErrorMessage = err.Error()
+			row.ResponseChars = 0
 		} else {
 			row.Status = CallStatusSuccess
 		}
@@ -302,7 +303,7 @@ func (c *AnthropicClient) Complete(ctx context.Context, systemPrompt, userMessag
 	body := anthropicReq{
 		Model:     modelName,
 		System:    systemPrompt,
-		MaxTokens: 1024,
+		MaxTokens: 4096,
 		Messages: []anthropicMessage{
 			{Role: "user", Content: userMessage},
 		},

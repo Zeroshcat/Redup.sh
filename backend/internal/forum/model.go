@@ -37,7 +37,7 @@ func (Category) TableName() string { return "categories" }
 
 type Topic struct {
 	ID             int64      `gorm:"primaryKey" json:"id"`
-	CategoryID     int64      `gorm:"index;not null" json:"category_id"`
+	CategoryID     int64      `gorm:"index:idx_topics_cat_deleted;not null" json:"category_id"`
 	CategorySlug   string     `gorm:"-" json:"category_slug,omitempty"`
 	CategoryName   string     `gorm:"-" json:"category_name,omitempty"`
 	UserID         int64      `gorm:"index;not null" json:"user_id"`
@@ -56,13 +56,14 @@ type Topic struct {
 	LikeCount      int        `gorm:"default:0" json:"like_count"`
 	LastPostAt     time.Time  `json:"last_post_at"`
 	CreatedAt      time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt      time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 	EditedAt       *time.Time `json:"edited_at,omitempty"`
 	// MinReadLevel gates who can read the topic body + replies. 0 means
 	// anyone. Enforced client-side for now (soft limit) — the author can
 	// set it up to their own level at creation, and the frontend hides
 	// the body when the viewer's level is too low.
 	MinReadLevel int16      `gorm:"default:0" json:"min_read_level"`
-	DeletedAt    *time.Time `gorm:"index" json:"-"`
+	DeletedAt    *time.Time `gorm:"index:idx_topics_cat_deleted" json:"-"`
 
 	// Transient per-request user state, never persisted. Handlers fill these
 	// when the caller is authenticated so the frontend can render "已赞/已收藏".
@@ -74,7 +75,7 @@ func (Topic) TableName() string { return "topics" }
 
 type Post struct {
 	ID             int64      `gorm:"primaryKey" json:"id"`
-	TopicID        int64      `gorm:"index;not null" json:"topic_id"`
+	TopicID        int64      `gorm:"index:idx_posts_topic_deleted;not null" json:"topic_id"`
 	UserID         int64      `gorm:"index;not null" json:"user_id"`
 	User           *UserRef   `gorm:"foreignKey:UserID;references:ID" json:"user,omitempty"`
 	Floor          int        `gorm:"not null" json:"floor"`
@@ -89,7 +90,7 @@ type Post struct {
 	Bot            *BotRef    `gorm:"foreignKey:BotID;references:ID" json:"bot,omitempty"`
 	CreatedAt      time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	EditedAt       *time.Time `json:"edited_at,omitempty"`
-	DeletedAt      *time.Time `gorm:"index" json:"-"`
+	DeletedAt      *time.Time `gorm:"index:idx_posts_topic_deleted" json:"-"`
 
 	UserLiked bool `gorm:"-" json:"user_liked,omitempty"`
 }

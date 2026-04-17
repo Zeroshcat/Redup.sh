@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -124,7 +125,7 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 	// --- user ---
 	userRepo := user.NewRepository(database)
 	if promoted, err := userRepo.EnsureAdminExists(); err != nil {
-		log.Fatalf("admin bootstrap failed: %v", err)
+		return nil, fmt.Errorf("admin bootstrap: %w", err)
 	} else if promoted {
 		log.Println("no admin found — promoted earliest user to admin")
 	}
@@ -149,7 +150,7 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 	siteRepo := site.NewRepository(database)
 	s.siteSvc = site.NewService(siteRepo)
 	if err := s.siteSvc.SeedDefaults(); err != nil {
-		log.Fatalf("site seed failed: %v", err)
+		return nil, fmt.Errorf("site seed: %w", err)
 	}
 	if savedAnon, err := s.siteSvc.GetAnon(); err == nil && savedAnon.Prefix != "" {
 		s.anonGen.SetPrefix(savedAnon.Prefix)
@@ -330,7 +331,7 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 	// --- forum (depends on anon, filter, moderator, site, bot ownership) ---
 	forumRepo := forum.NewRepository(database)
 	if err := forumRepo.SeedDefaultCategories(); err != nil {
-		log.Fatalf("category seed failed: %v", err)
+		return nil, fmt.Errorf("category seed: %w", err)
 	}
 	s.forumSvc = forum.NewService(forumRepo, s.anonSvc)
 	s.forumSvc.SetNotifier(&forumNotifyAdapter{notif: s.notifSvc})

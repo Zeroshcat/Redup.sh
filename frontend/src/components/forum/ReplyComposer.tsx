@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { MarkdownEditor } from "@/components/markdown/MarkdownEditor";
@@ -38,7 +39,7 @@ export function ReplyComposer({
   if (!user) {
     return (
       <div className="rounded-lg border border-border bg-card p-6 text-center text-sm text-muted-foreground">
-        请先 <a href="/login" className="font-medium text-foreground underline">登录</a> 后再回复
+        请先 <Link href="/login" className="font-medium text-foreground underline">登录</Link> 后再回复
       </div>
     );
   }

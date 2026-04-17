@@ -50,6 +50,7 @@ export function adaptTopic(t: ServerTopic): Topic {
     likeCount: t.like_count,
     viewCount: t.view_count,
     createdAt: t.created_at,
+    updatedAt: t.updated_at,
     editedAt: t.edited_at,
     minReadLevel: t.min_read_level,
     lastPostAt: t.last_post_at,
