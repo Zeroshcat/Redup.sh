@@ -13,6 +13,7 @@ export interface ServerUser {
   role: string;
   status: string;
   joined_at: string;
+  email_verified_at?: string | null;
 }
 
 export interface AuthSession {
@@ -20,6 +21,9 @@ export interface AuthSession {
   access_token: string;
   refresh_token: string;
   expires_in: number;
+  // True when the site requires email verification and this user
+  // hasn't completed it yet. UI should steer them to /verify-email.
+  email_verify_required?: boolean;
 }
 
 export async function register(input: {
@@ -85,5 +89,70 @@ export async function changePassword(
   await api("/api/users/me/password", {
     method: "POST",
     body: { old_password: oldPassword, new_password: newPassword },
+  });
+}
+
+// Ask the backend to send (or resend) the 6-digit email verification
+// code to the given address. Backend enforces a 60s cooldown and
+// returns a generic success regardless of whether the email is
+// registered, so the UI can treat this as fire-and-forget.
+export async function sendVerificationEmail(email: string): Promise<void> {
+  await api("/api/auth/send-verification", {
+    method: "POST",
+    body: { email },
+    auth: false,
+  });
+}
+
+export interface VerifyEmailResult {
+  user: ServerUser;
+  verified: boolean;
+}
+
+// Redeem a verification code. On success the user's email_verified_at
+// is stamped and we get the fresh row back. Does NOT rotate tokens —
+// the existing session stays valid.
+export async function verifyEmail(email: string, code: string): Promise<VerifyEmailResult> {
+  return api<VerifyEmailResult>("/api/auth/verify-email", {
+    method: "POST",
+    body: { email, code },
+    auth: false,
+  });
+}
+
+// Kick off a password-reset flow. Backend is deliberately quiet about
+// whether the address is registered — the UI always treats the call
+// as a success.
+export async function forgotPassword(email: string): Promise<void> {
+  await api("/api/auth/forgot-password", {
+    method: "POST",
+    body: { email },
+    auth: false,
+  });
+}
+
+// Redeem a password-reset token. 400 + `reset_token_invalid` when the
+// token is missing / expired / already used.
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  await api("/api/auth/reset-password", {
+    method: "POST",
+    body: { token, new_password: newPassword },
+    auth: false,
+  });
+}
+
+// Request changing the current user's email. Sends a 6-digit code to
+// new_email; use confirmEmailChange to finish.
+export async function requestEmailChange(newEmail: string): Promise<void> {
+  await api("/api/users/me/email/request", {
+    method: "POST",
+    body: { new_email: newEmail },
+  });
+}
+
+export async function confirmEmailChange(newEmail: string, code: string): Promise<ServerUser> {
+  return api<ServerUser>("/api/users/me/email/confirm", {
+    method: "POST",
+    body: { new_email: newEmail, code },
   });
 }

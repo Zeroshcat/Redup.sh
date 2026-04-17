@@ -7,22 +7,28 @@ import {
   saveSiteBasic,
   saveSiteCredits,
   saveSiteFooter,
+  saveSiteLinks,
   saveSiteLLM,
   saveSiteModeration,
   saveSiteRegistration,
   saveSiteRules,
   saveSiteSEO,
+  saveSiteSMTP,
+  sendTestMail,
   type LLMProviderKind,
   type SiteBasic,
   type SiteCredits,
   type SiteFooter,
+  type SiteLinks,
   type SiteLLM,
   type SiteLLMProvider,
   type SiteModeration,
   type SiteRegistration,
   type SiteRules,
   type SiteSEO,
+  type SiteSMTP,
   type SiteSnapshot,
+  type SMTPEncryption,
 } from "@/lib/api/site";
 import { APIError } from "@/lib/api-client";
 
@@ -34,7 +40,9 @@ type Section =
   | "footer"
   | "credits"
   | "moderation"
-  | "llm";
+  | "llm"
+  | "smtp"
+  | "links";
 
 const SECTIONS: { key: Section; label: string; icon: string }[] = [
   { key: "basic", label: "基本信息", icon: "📄" },
@@ -45,6 +53,8 @@ const SECTIONS: { key: Section; label: string; icon: string }[] = [
   { key: "credits", label: "积分与等级", icon: "✦" },
   { key: "moderation", label: "AI 审核", icon: "🛡" },
   { key: "llm", label: "LLM 提供方", icon: "🧠" },
+  { key: "smtp", label: "邮件 SMTP", icon: "✉" },
+  { key: "links", label: "外链策略", icon: "🔗" },
 ];
 
 export default function AdminSitePage() {
@@ -150,6 +160,18 @@ export default function AdminSitePage() {
                 <LLMSection
                   value={snapshot.llm}
                   onSaved={(v) => setSnapshot({ ...snapshot, llm: v })}
+                />
+              )}
+              {active === "smtp" && (
+                <SMTPSection
+                  value={snapshot.smtp}
+                  onSaved={(v) => setSnapshot({ ...snapshot, smtp: v })}
+                />
+              )}
+              {active === "links" && (
+                <LinksSection
+                  value={snapshot.links}
+                  onSaved={(v) => setSnapshot({ ...snapshot, links: v })}
                 />
               )}
             </>
@@ -1385,6 +1407,284 @@ function LLMSection({
         配置完成后，在「AI 审核」和「积分与等级 → 翻译」中把 provider 字段填成上面的 ID
         即可让对应功能调用你配置的上游模型。
       </div>
+    </div>
+  );
+}
+
+/* ---------- SMTP ---------- */
+
+function SMTPSection({ value, onSaved }: { value: SiteSMTP; onSaved: (v: SiteSMTP) => void }) {
+  const s = useSaveState(value, saveSiteSMTP, onSaved);
+  const v = s.value;
+  const set = (patch: Partial<SiteSMTP>) => s.setValue({ ...v, ...patch });
+
+  const [testTo, setTestTo] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [testMsg, setTestMsg] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+
+  async function doTest() {
+    setTesting(true);
+    setTestMsg(null);
+    try {
+      await sendTestMail(testTo);
+      setTestMsg({ kind: "ok", text: `已发送至 ${testTo}，请查收。` });
+    } catch (err) {
+      const msg = err instanceof APIError ? `${err.message} (req ${err.requestId})` : "发送失败";
+      setTestMsg({ kind: "error", text: msg });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  const encryptionOptions: { value: SMTPEncryption; label: string; hint: string }[] = [
+    { value: "starttls", label: "STARTTLS (推荐, 587)", hint: "先明文握手再升级到 TLS" },
+    { value: "tls", label: "隐式 TLS (465)", hint: "从头就是 TLS，部分运营商仍在用" },
+    { value: "none", label: "不加密 (25)", hint: "仅限内网或测试，生产请勿启用" },
+  ];
+
+  return (
+    <div>
+      <SectionHeader
+        title="邮件 SMTP"
+        desc="配置后，平台可发注册验证、密码找回、通知类邮件。密码保存后仅展示掩码，想更换时直接输入新值即可。"
+      />
+
+      <div className="rounded-lg border border-border bg-card px-4">
+        <Toggle
+          checked={v.enabled}
+          onChange={(x) => set({ enabled: x })}
+          label="启用邮件发送"
+          desc="关闭后，所有依赖邮件的功能(邮箱验证 / 密码重置)都会直接走失败分支"
+        />
+      </div>
+
+      <div className="mt-5 grid gap-4 md:grid-cols-2">
+        <Field label="SMTP 主机" hint="例如 smtp.gmail.com">
+          <Input
+            value={v.host}
+            onChange={(e) => set({ host: e.target.value })}
+            placeholder="smtp.example.com"
+          />
+        </Field>
+        <Field label="端口">
+          <Input
+            type="number"
+            value={v.port}
+            onChange={(e) => set({ port: Number(e.target.value) })}
+          />
+        </Field>
+      </div>
+
+      <Field label="加密模式">
+        <div className="flex flex-col gap-2">
+          {encryptionOptions.map((opt) => (
+            <label
+              key={opt.value}
+              className={`flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-sm transition ${
+                v.encryption === opt.value
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:bg-accent"
+              }`}
+            >
+              <input
+                type="radio"
+                name="smtp-encryption"
+                checked={v.encryption === opt.value}
+                onChange={() => set({ encryption: opt.value })}
+                className="mt-1"
+              />
+              <div>
+                <div className="font-medium text-foreground">{opt.label}</div>
+                <div className="text-[11px] text-muted-foreground">{opt.hint}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+      </Field>
+
+      <div className="mt-5 grid gap-4 md:grid-cols-2">
+        <Field label="用户名" hint="多数服务商使用完整邮箱地址">
+          <Input
+            value={v.username ?? ""}
+            onChange={(e) => set({ username: e.target.value })}
+            autoComplete="off"
+          />
+        </Field>
+        <Field label="密码" hint="留空表示保留已保存的凭据">
+          <Input
+            type="password"
+            value={v.password ?? ""}
+            onChange={(e) => set({ password: e.target.value })}
+            placeholder="••••••••"
+            autoComplete="new-password"
+          />
+        </Field>
+      </div>
+
+      <div className="mt-5 grid gap-4 md:grid-cols-2">
+        <Field label="发件人地址" hint="收件人看到的 From,通常与用户名一致">
+          <Input
+            value={v.from_address}
+            onChange={(e) => set({ from_address: e.target.value })}
+            placeholder="noreply@example.com"
+          />
+        </Field>
+        <Field label="发件人显示名" hint="例如 Redup 团队">
+          <Input
+            value={v.from_name ?? ""}
+            onChange={(e) => set({ from_name: e.target.value })}
+            placeholder="Redup"
+          />
+        </Field>
+      </div>
+
+      <SaveBar
+        onSave={s.onSave}
+        onReset={s.onReset}
+        loading={s.loading}
+        error={s.error}
+        saved={s.saved}
+      />
+
+      <div className="mt-8 rounded-lg border border-border bg-card p-4">
+        <div className="mb-2 text-sm font-semibold text-foreground">发送测试邮件</div>
+        <p className="mb-3 text-[11px] text-muted-foreground">
+          使用当前已保存的 SMTP 配置发送一封测试邮件。请先保存再测试。
+        </p>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Input
+            value={testTo}
+            onChange={(e) => setTestTo(e.target.value)}
+            placeholder="收件地址"
+            type="email"
+          />
+          <button
+            type="button"
+            onClick={doTest}
+            disabled={testing || !testTo || !v.enabled}
+            className="shrink-0 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-40"
+          >
+            {testing ? "发送中…" : "发送测试"}
+          </button>
+        </div>
+        {testMsg && (
+          <div
+            className={`mt-3 rounded-md border px-3 py-2 text-xs ${
+              testMsg.kind === "ok"
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                : "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+            }`}
+          >
+            {testMsg.text}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- 外链策略 ---------- */
+
+function LinksSection({
+  value,
+  onSaved,
+}: {
+  value: SiteLinks;
+  onSaved: (v: SiteLinks) => void;
+}) {
+  const s = useSaveState(value, saveSiteLinks, onSaved);
+  const v = s.value;
+
+  // Both domain lists are edited as textareas (one per line). We only
+  // clean them when saving — typing should stay 1:1 with what the user
+  // sees so a cursor doesn't jump around while they're in the middle
+  // of a line.
+  const [trustedRaw, setTrustedRaw] = useState((v.trusted_domains ?? []).join("\n"));
+  const [denyRaw, setDenyRaw] = useState((v.denylist_domains ?? []).join("\n"));
+  useEffect(() => {
+    setTrustedRaw((v.trusted_domains ?? []).join("\n"));
+    setDenyRaw((v.denylist_domains ?? []).join("\n"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  function commitDomains() {
+    const toList = (raw: string) =>
+      raw.split("\n").map((d) => d.trim().toLowerCase()).filter(Boolean);
+    s.setValue({
+      ...v,
+      trusted_domains: toList(trustedRaw),
+      denylist_domains: toList(denyRaw),
+    });
+  }
+
+  return (
+    <div>
+      <SectionHeader
+        title="外链策略"
+        desc="控制用户帖子里指向站外的链接如何被渲染、跳转、以及是否抓取预览卡片。"
+      />
+
+      <div className="rounded-lg border border-border bg-card px-4">
+        <Toggle
+          checked={v.external_warn_enabled}
+          onChange={(x) => s.setValue({ ...v, external_warn_enabled: x })}
+          label="启用跳转提醒页"
+          desc="开启后点击非可信域名的外链会先跳一个中间页,由用户二次确认。可信白名单直接放行。"
+        />
+        <Toggle
+          checked={v.preview_enabled}
+          onChange={(x) => s.setValue({ ...v, preview_enabled: x })}
+          label="启用链接预览卡片"
+          desc="开启后,帖子里单独一行的 URL 会被替换成富预览卡片(OG 标题 + 描述 + 缩略图)。服务器会在缓存未命中时实时抓取目标页面;仅登录用户可触发新的抓取。"
+        />
+      </div>
+
+      <div className="mt-5">
+        <Field
+          label="可信域名白名单"
+          hint="每行一个域名。命中的域名仍被视为外链(nofollow + 新窗口),但跳转提醒会直接放行。留空则所有非本站域名都会触发提醒。"
+        >
+          <Textarea
+            value={trustedRaw}
+            onChange={(e) => setTrustedRaw(e.target.value)}
+            onBlur={commitDomains}
+            rows={6}
+            placeholder={"github.com\nyoutube.com\nwikipedia.org"}
+            className="font-mono text-xs"
+          />
+        </Field>
+      </div>
+
+      <div className="mt-5">
+        <Field
+          label="预览黑名单"
+          hint="每行一个域名。命中的域名不会生成预览卡片,帖子里渲染为一条静态提示。支持子域后缀匹配(填 example.com 同时覆盖 blog.example.com)。"
+        >
+          <Textarea
+            value={denyRaw}
+            onChange={(e) => setDenyRaw(e.target.value)}
+            onBlur={commitDomains}
+            rows={4}
+            placeholder={"blocked-site.com\nscam.example.net"}
+            className="font-mono text-xs"
+          />
+        </Field>
+      </div>
+
+      <SaveBar
+        onSave={() => {
+          commitDomains();
+          s.onSave();
+        }}
+        onReset={() => {
+          s.onReset();
+          setTrustedRaw((value.trusted_domains ?? []).join("\n"));
+          setDenyRaw((value.denylist_domains ?? []).join("\n"));
+        }}
+        loading={s.loading}
+        error={s.error}
+        saved={s.saved}
+      />
     </div>
   );
 }

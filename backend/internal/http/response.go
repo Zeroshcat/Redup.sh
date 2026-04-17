@@ -41,6 +41,16 @@ const (
 	CodeInvalidCredential = "invalid_credential"
 	CodeAccountDisabled   = "account_disabled"
 	CodeRateLimited       = "rate_limited"
+
+	// Email verification / password reset flow codes. Kept separate
+	// from the login codes above so the frontend can branch on them
+	// without string-matching on messages.
+	CodeEmailNotVerified      = "email_not_verified"
+	CodeInvalidVerifyCode     = "invalid_verification_code"
+	CodeEmailAlreadyVerified  = "email_already_verified"
+	CodeMailNotConfigured     = "mail_not_configured"
+	CodeResendTooSoon         = "resend_too_soon"
+	CodeResetTokenInvalid     = "reset_token_invalid"
 )
 
 // OK writes a 200 success response with data.

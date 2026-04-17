@@ -20,7 +20,9 @@ import (
 	"github.com/redup/backend/internal/contentfilter"
 	"github.com/redup/backend/internal/credits"
 	"github.com/redup/backend/internal/forum"
+	"github.com/redup/backend/internal/linkpreview"
 	"github.com/redup/backend/internal/llm"
+	"github.com/redup/backend/internal/mailer"
 	"github.com/redup/backend/internal/messaging"
 	"github.com/redup/backend/internal/moderation"
 	"github.com/redup/backend/internal/notification"
@@ -196,6 +198,33 @@ func (a *registrationConfigAdapter) AllowedEmailDomains() []string {
 		return nil
 	}
 	return r.AllowedEmailDomains
+}
+
+func (a *registrationConfigAdapter) EmailVerifyRequired() bool {
+	r, err := a.siteSvc.GetRegistration()
+	if err != nil {
+		return false
+	}
+	return r.EmailVerifyRequired
+}
+
+// userMailSenderAdapter satisfies user.MailSender by delegating to the
+// mailer service. Lives here rather than in the user package so user/
+// stays free of any mailer dependency.
+type userMailSenderAdapter struct {
+	mailer *mailer.Service
+}
+
+func (a *userMailSenderAdapter) Ready() bool { return a.mailer.Ready() }
+
+func (a *userMailSenderAdapter) Send(ctx context.Context, to, toName, subject, textBody, htmlBody string) error {
+	return a.mailer.Send(ctx, mailer.SendInput{
+		To:       to,
+		ToName:   toName,
+		Subject:  subject,
+		TextBody: textBody,
+		HTMLBody: htmlBody,
+	})
 }
 
 // creditsConfigAdapter bridges the live site_settings credits group to the
@@ -454,6 +483,67 @@ func (a *anonAuditRecorder) Record(c *gin.Context, action, detail string) {
 		TargetType: "anon",
 		Detail:     detail,
 	})
+}
+
+// linkPreviewPolicyAdapter satisfies linkpreview.PolicyProvider by
+// reading the live site.links group. Denylist matches host verbatim
+// or by suffix (example.com covers blog.example.com) — same shape the
+// trusted-domains list uses, so operators learn one rule.
+type linkPreviewPolicyAdapter struct {
+	siteSvc *site.Service
+}
+
+func (a *linkPreviewPolicyAdapter) PreviewEnabled() bool {
+	l, err := a.siteSvc.GetLinks()
+	if err != nil {
+		return false
+	}
+	return l.PreviewEnabled
+}
+
+func (a *linkPreviewPolicyAdapter) DomainDenied(host string) bool {
+	if host == "" {
+		return false
+	}
+	l, err := a.siteSvc.GetLinks()
+	if err != nil {
+		return false
+	}
+	for _, d := range l.DenylistDomains {
+		if host == d || hasDomainSuffix(host, d) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDomainSuffix(host, suffix string) bool {
+	if len(host) <= len(suffix) {
+		return false
+	}
+	return host[len(host)-len(suffix)-1] == '.' && host[len(host)-len(suffix):] == suffix
+}
+
+// Force the import stay referenced even if builds remove one of the
+// users later. (Defensive — see https://golang.org/cmd/compile/ blank
+// imports; cheap insurance against churn.)
+var _ = linkpreview.Preview{}
+
+// toMailerConfig projects the site-settings SMTP shape onto the narrow
+// config mailer.Service cares about. Kept here (rather than in the
+// mailer package) so the mailer stays free of any dependency on the
+// site package.
+func toMailerConfig(v site.SMTP) mailer.Config {
+	return mailer.Config{
+		Enabled:     v.Enabled,
+		Host:        v.Host,
+		Port:        v.Port,
+		Username:    v.Username,
+		Password:    v.Password,
+		Encryption:  v.Encryption,
+		FromAddress: v.FromAddress,
+		FromName:    v.FromName,
+	}
 }
 
 // toRouterProviders converts the persisted site.LLMProvider shape into

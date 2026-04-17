@@ -65,7 +65,11 @@ function RegisterInner() {
         invite_code: inviteCode.trim() || undefined,
       });
       setUser(session.user);
-      router.push("/");
+      if (session.email_verify_required) {
+        router.push(`/verify-email?email=${encodeURIComponent(session.user.email)}`);
+      } else {
+        router.push("/");
+      }
     } catch (err) {
       if (err instanceof APIError) {
         const msg = errorMessage(err);

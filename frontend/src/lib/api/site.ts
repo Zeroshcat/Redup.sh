@@ -111,6 +111,29 @@ export interface SiteLLM {
   providers: SiteLLMProvider[];
 }
 
+export type SMTPEncryption = "none" | "starttls" | "tls";
+
+// On read the server masks the real password with "••••••••". On write,
+// the client sends the empty string (or the mask) to mean "keep the
+// stored credential" — mirrors how LLM api keys are handled.
+export interface SiteSMTP {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+  encryption: SMTPEncryption;
+  from_address: string;
+  from_name?: string;
+}
+
+export interface SiteLinks {
+  external_warn_enabled: boolean;
+  trusted_domains?: string[];
+  preview_enabled: boolean;
+  denylist_domains?: string[];
+}
+
 export interface SiteSnapshot {
   basic: SiteBasic;
   registration: SiteRegistration;
@@ -121,6 +144,8 @@ export interface SiteSnapshot {
   credits: SiteCredits;
   moderation: SiteModeration;
   llm: SiteLLM;
+  smtp: SiteSMTP;
+  links: SiteLinks;
 }
 
 export interface SitePublicInfo {
@@ -131,6 +156,9 @@ export interface SitePublicInfo {
   language: string;
   registration_mode: string;
   anon_prefix: string;
+  external_warn_enabled?: boolean;
+  trusted_domains?: string[];
+  preview_enabled?: boolean;
 }
 
 // ---------- Server-side (SSR) ----------
@@ -184,4 +212,24 @@ export function saveSiteModeration(v: SiteModeration) {
 
 export function saveSiteLLM(v: SiteLLM) {
   return api<SiteLLM>("/api/admin/site/llm", { method: "PUT", body: v });
+}
+
+export function saveSiteSMTP(v: SiteSMTP) {
+  return api<SiteSMTP>("/api/admin/site/smtp", { method: "PUT", body: v });
+}
+
+export interface MailTestResult {
+  ok: boolean;
+  to: string;
+}
+
+export function saveSiteLinks(v: SiteLinks) {
+  return api<SiteLinks>("/api/admin/site/links", { method: "PUT", body: v });
+}
+
+export function sendTestMail(to: string, subject?: string, body?: string) {
+  return api<MailTestResult>("/api/admin/mail/test", {
+    method: "POST",
+    body: { to, subject, body },
+  });
 }

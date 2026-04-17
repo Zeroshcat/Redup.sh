@@ -103,6 +103,7 @@ func mountPublicAPI(r *gin.Engine, s *services) {
 	s.userHandler.Register(api, authRateLimit)
 	s.forumHandler.Register(api)
 	s.siteHandler.RegisterPublic(api)
+	s.linkPreviewHandler.RegisterPublic(api)
 	s.followHandler.Register(api)
 	s.botHandler.Register(api)
 	s.streamHandler.Register(api)
@@ -168,4 +169,5 @@ func mountAdminAPI(r *gin.Engine, s *services) {
 	s.notifHandler.RegisterAdmin(admin)
 	s.messagingHandler.RegisterAdmin(admin)
 	s.llmHandler.RegisterAdmin(admin)
+	s.mailerHandler.RegisterAdmin(admin)
 }

@@ -33,14 +33,22 @@ func (h *Handler) record(c *gin.Context, group string) {
 
 // PublicInfo is the subset visible to unauthenticated visitors. Keep this
 // intentionally lean — any field added here is exposed to the world.
+//
+// ExternalWarnEnabled + TrustedDomains are exposed because every
+// user-rendered markdown needs them: the frontend's MarkdownRenderer
+// rewrites non-trusted external hrefs into an interstitial redirect
+// URL. Shipping them here avoids a second round-trip on every SSR.
 type PublicInfo struct {
-	Name             string `json:"name"`
-	Tagline          string `json:"tagline"`
-	Description      string `json:"description"`
-	LogoURL          string `json:"logo_url,omitempty"`
-	Language         string `json:"language"`
-	RegistrationMode string `json:"registration_mode"`
-	AnonPrefix       string `json:"anon_prefix"`
+	Name                string   `json:"name"`
+	Tagline             string   `json:"tagline"`
+	Description         string   `json:"description"`
+	LogoURL             string   `json:"logo_url,omitempty"`
+	Language            string   `json:"language"`
+	RegistrationMode    string   `json:"registration_mode"`
+	AnonPrefix          string   `json:"anon_prefix"`
+	ExternalWarnEnabled bool     `json:"external_warn_enabled"`
+	TrustedDomains      []string `json:"trusted_domains,omitempty"`
+	PreviewEnabled      bool     `json:"preview_enabled"`
 }
 
 // RegisterPublic mounts the public, unauthenticated site info endpoint. The
@@ -62,6 +70,8 @@ func (h *Handler) RegisterAdmin(r *gin.RouterGroup) {
 	r.PUT("/site/credits", h.putCredits)
 	r.PUT("/site/moderation", h.putModeration)
 	r.PUT("/site/llm", h.putLLM)
+	r.PUT("/site/smtp", h.putSMTP)
+	r.PUT("/site/links", h.putLinks)
 }
 
 func (h *Handler) publicInfo(c *gin.Context) {
@@ -80,14 +90,22 @@ func (h *Handler) publicInfo(c *gin.Context) {
 		httpx.Internal(c, err.Error())
 		return
 	}
+	links, err := h.svc.GetLinks()
+	if err != nil {
+		httpx.Internal(c, err.Error())
+		return
+	}
 	httpx.OK(c, PublicInfo{
-		Name:             basic.Name,
-		Tagline:          basic.Tagline,
-		Description:      basic.Description,
-		LogoURL:          basic.LogoURL,
-		Language:         basic.Language,
-		RegistrationMode: reg.Mode,
-		AnonPrefix:       anon.Prefix,
+		Name:                basic.Name,
+		Tagline:             basic.Tagline,
+		Description:         basic.Description,
+		LogoURL:             basic.LogoURL,
+		Language:            basic.Language,
+		RegistrationMode:    reg.Mode,
+		AnonPrefix:          anon.Prefix,
+		ExternalWarnEnabled: links.ExternalWarnEnabled,
+		TrustedDomains:      links.TrustedDomains,
+		PreviewEnabled:      links.PreviewEnabled,
 	})
 }
 
@@ -221,6 +239,95 @@ func (h *Handler) putAnon(c *gin.Context) {
 	}
 	h.record(c, "anon")
 	httpx.OK(c, v)
+}
+
+// putLinks saves the outbound-link policy. Normalizes both domain
+// lists: trims whitespace, lower-cases, and drops blank / duplicate
+// entries so the admin can paste a sloppy list and we still store a
+// clean one.
+func (h *Handler) putLinks(c *gin.Context) {
+	var v Links
+	if err := c.ShouldBindJSON(&v); err != nil {
+		httpx.BadRequest(c, "invalid request")
+		return
+	}
+	v.TrustedDomains = cleanDomainList(v.TrustedDomains)
+	v.DenylistDomains = cleanDomainList(v.DenylistDomains)
+
+	uid, _ := auth.CurrentUserID(c)
+	if err := h.svc.SaveLinks(v, uid); err != nil {
+		httpx.Internal(c, err.Error())
+		return
+	}
+	h.record(c, "links")
+	httpx.OK(c, v)
+}
+
+func cleanDomainList(in []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(in))
+	for _, d := range in {
+		d = strings.ToLower(strings.TrimSpace(d))
+		if d == "" {
+			continue
+		}
+		if _, dup := seen[d]; dup {
+			continue
+		}
+		seen[d] = struct{}{}
+		out = append(out, d)
+	}
+	return out
+}
+
+// putSMTP saves the SMTP credentials. Empty or mask-placeholder
+// password means "keep the stored credential" — mirrors the pattern
+// used for LLM api keys. Returns the masked view so the admin UI
+// refreshes its mask on save without ever seeing the real password.
+func (h *Handler) putSMTP(c *gin.Context) {
+	var v SMTP
+	if err := c.ShouldBindJSON(&v); err != nil {
+		httpx.BadRequest(c, "invalid request")
+		return
+	}
+	v.Host = strings.TrimSpace(v.Host)
+	v.Username = strings.TrimSpace(v.Username)
+	v.FromAddress = strings.TrimSpace(v.FromAddress)
+	v.FromName = strings.TrimSpace(v.FromName)
+	v.Encryption = strings.ToLower(strings.TrimSpace(v.Encryption))
+
+	if v.Encryption == "" {
+		v.Encryption = "starttls"
+	}
+	switch v.Encryption {
+	case "none", "starttls", "tls":
+	default:
+		httpx.ValidationError(c, "invalid_smtp_encryption", "encryption must be none / starttls / tls")
+		return
+	}
+
+	// Preserve stored password when the caller sent empty or the mask.
+	if v.Password == "" || v.Password == "••••••••" {
+		existing, err := h.svc.GetSMTP()
+		if err != nil {
+			httpx.Internal(c, err.Error())
+			return
+		}
+		v.Password = existing.Password
+	}
+
+	uid, _ := auth.CurrentUserID(c)
+	if err := h.svc.SaveSMTP(v, uid); err != nil {
+		httpx.Internal(c, err.Error())
+		return
+	}
+	h.record(c, "smtp")
+
+	masked := v
+	if masked.Password != "" {
+		masked.Password = "••••••••"
+	}
+	httpx.OK(c, masked)
 }
 
 // putLLM replaces the full providers list. Validation pins the kind to

@@ -2,6 +2,7 @@ package user
 
 import (
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -133,6 +134,26 @@ func (r *Repository) UpdateProfile(id int64, avatarURL, bio, location, website s
 		"location":   location,
 		"website":    website,
 	}).Error
+}
+
+// UpdateEmail swaps the email column and stamps email_verified_at
+// atomically. Callers are expected to have already validated
+// uniqueness; a race against another writer still trips the unique
+// index and surfaces a driver error the service translates.
+func (r *Repository) UpdateEmail(id int64, email string, verifiedAt time.Time) error {
+	return r.db.Model(&User{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"email":             email,
+		"email_verified_at": verifiedAt,
+	}).Error
+}
+
+// MarkEmailVerified stamps email_verified_at on the row. Idempotent:
+// a second call just rewrites the same timestamp and doesn't disturb
+// anything else. Caller is expected to have already validated the
+// verification code before reaching here.
+func (r *Repository) MarkEmailVerified(id int64, when time.Time) error {
+	return r.db.Model(&User{}).Where("id = ?", id).
+		UpdateColumn("email_verified_at", when).Error
 }
 
 // UpdatePasswordHash replaces the stored bcrypt hash. Caller must have

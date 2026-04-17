@@ -23,6 +23,10 @@ type Service struct {
 	// Optional callback fired when site.basic is saved. Main wires this
 	// to hot-reload the bot webhook proxy URL without a restart.
 	onBasicChange func(Basic)
+
+	// Optional callback fired when site.smtp is saved. Main wires this
+	// to the mailer service so admin edits take effect on the next Send.
+	onSMTPChange func(SMTP)
 }
 
 func NewService(repo *Repository) *Service {
@@ -48,6 +52,13 @@ func (s *Service) OnBasicChange(fn func(Basic)) {
 	s.onBasicChange = fn
 }
 
+// OnSMTPChange registers a callback invoked whenever the smtp group is
+// saved. Main wires this to mailer.Service.SetConfig so the next Send
+// picks up the new credentials without a restart.
+func (s *Service) OnSMTPChange(fn func(SMTP)) {
+	s.onSMTPChange = fn
+}
+
 // ---------- Seeds ----------
 
 // SeedDefaults ensures every key has a row. Run once on startup. Idempotent.
@@ -65,6 +76,8 @@ func (s *Service) SeedDefaults() error {
 		{KeyCredits, defaultCredits()},
 		{KeyModeration, defaultModeration()},
 		{KeyLLM, defaultLLM()},
+		{KeySMTP, defaultSMTP()},
+		{KeyLinks, defaultLinks()},
 	} {
 		raw, err := s.repo.Get(pair.key)
 		if err != nil {
@@ -155,6 +168,22 @@ func defaultModeration() Moderation {
 	}
 }
 
+func defaultLinks() Links {
+	return Links{
+		ExternalWarnEnabled: false,
+		TrustedDomains:      []string{},
+	}
+}
+
+func defaultSMTP() SMTP {
+	return SMTP{
+		Enabled:    false,
+		Host:       "",
+		Port:       587,
+		Encryption: "starttls",
+	}
+}
+
 // defaultLLM is an empty list — admin must add providers explicitly from
 // the admin panel. main.go's bootstrap will seed a couple of entries
 // from legacy .env vars if they're present and the list is still empty,
@@ -208,6 +237,16 @@ func (s *Service) GetModeration() (Moderation, error) {
 func (s *Service) GetLLM() (LLM, error) {
 	var v LLM
 	return v, s.loadInto(KeyLLM, defaultLLM(), &v)
+}
+
+func (s *Service) GetSMTP() (SMTP, error) {
+	var v SMTP
+	return v, s.loadInto(KeySMTP, defaultSMTP(), &v)
+}
+
+func (s *Service) GetLinks() (Links, error) {
+	var v Links
+	return v, s.loadInto(KeyLinks, defaultLinks(), &v)
 }
 
 // loadInto reads the raw JSON for key, falling back to the provided default
@@ -272,6 +311,27 @@ func (s *Service) SaveAnon(v Anon, by int64) error {
 	return nil
 }
 
+// SaveLinks persists the outbound-link policy. No hot-reload hook
+// yet because the frontend reads this on each admin snapshot — when
+// the renderer starts consuming the list live, this can grow an
+// OnLinksChange callback the same shape as OnSMTPChange.
+func (s *Service) SaveLinks(v Links, by int64) error {
+	return s.repo.Set(KeyLinks, v, by)
+}
+
+// SaveSMTP persists the mail delivery config and notifies any
+// registered listener (main.go → mailer.Service) so live sends pick
+// up the change without a restart.
+func (s *Service) SaveSMTP(v SMTP, by int64) error {
+	if err := s.repo.Set(KeySMTP, v, by); err != nil {
+		return err
+	}
+	if s.onSMTPChange != nil {
+		s.onSMTPChange(v)
+	}
+	return nil
+}
+
 // SaveLLM persists the providers list and notifies any registered
 // listener (main.go → llm.Router) so live calls pick up the change
 // without a restart.
@@ -299,6 +359,8 @@ type Snapshot struct {
 	Credits      Credits      `json:"credits"`
 	Moderation   Moderation   `json:"moderation"`
 	LLM          LLM          `json:"llm"`
+	SMTP         SMTP         `json:"smtp"`
+	Links        Links        `json:"links"`
 }
 
 // MaskedSnapshot is like Snapshot but strips api keys from the LLM
@@ -312,6 +374,9 @@ func (s *Service) MaskedSnapshot() (Snapshot, error) {
 		if snap.LLM.Providers[i].APIKey != "" {
 			snap.LLM.Providers[i].APIKey = "••••••••"
 		}
+	}
+	if snap.SMTP.Password != "" {
+		snap.SMTP.Password = "••••••••"
 	}
 	return snap, nil
 }
@@ -344,6 +409,12 @@ func (s *Service) Snapshot() (Snapshot, error) {
 		return snap, err
 	}
 	if snap.LLM, err = s.GetLLM(); err != nil {
+		return snap, err
+	}
+	if snap.SMTP, err = s.GetSMTP(); err != nil {
+		return snap, err
+	}
+	if snap.Links, err = s.GetLinks(); err != nil {
 		return snap, err
 	}
 	return snap, nil

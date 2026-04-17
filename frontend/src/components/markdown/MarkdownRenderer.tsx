@@ -1,9 +1,18 @@
+"use client";
+
+import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeHighlight from "rehype-highlight";
 import Link from "next/link";
 import { CodeBlock } from "./CodeBlock";
+import {
+  buildInterstitialHref,
+  classifyHref,
+  useLinksPolicy,
+} from "@/components/links/LinksPolicyProvider";
+import { LinkCard } from "@/components/linkCards/LinkCard";
 import "./markdown-highlight.css";
 
 const sanitizeSchema = {
@@ -16,6 +25,41 @@ const sanitizeSchema = {
 };
 
 const MENTION_REGEX = /(@[A-Za-z][A-Za-z0-9_-]*)/g;
+
+// standaloneURL returns the href when a paragraph's children is just
+// one link whose visible text equals its href (remark-gfm autolinks a
+// bare URL exactly this way). Anything fancier — surrounding text,
+// custom anchor text, multiple links — leaves the paragraph alone.
+function standaloneURL(children: React.ReactNode): string | null {
+  const arr = React.Children.toArray(children).filter((c) => {
+    if (typeof c === "string") return c.trim() !== "";
+    return true;
+  });
+  if (arr.length !== 1) return null;
+  const only = arr[0];
+  if (!React.isValidElement(only)) return null;
+  const props = only.props as { href?: unknown; children?: React.ReactNode };
+  const href = typeof props.href === "string" ? props.href : null;
+  if (!href) return null;
+  if (!/^https?:\/\//i.test(href)) return null;
+  const text = textOf(props.children).trim();
+  if (!text) return null;
+  // Tolerate a trailing slash mismatch (`https://x` ↔ `https://x/`).
+  const a = href.replace(/\/$/, "");
+  const b = text.replace(/\/$/, "");
+  return a === b ? href : null;
+}
+
+function textOf(node: React.ReactNode): string {
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  if (React.isValidElement(node)) {
+    const { children } = node.props as { children?: React.ReactNode };
+    return textOf(children);
+  }
+  return "";
+}
 
 function renderMentions(text: string): React.ReactNode[] {
   const parts = text.split(MENTION_REGEX);
@@ -38,23 +82,34 @@ function renderMentions(text: string): React.ReactNode[] {
 }
 
 export function MarkdownRenderer({ content }: { content: string }) {
+  const linksPolicy = useLinksPolicy();
   return (
     <div className="redup-md text-[15px] leading-relaxed text-foreground">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeSanitize, sanitizeSchema], rehypeHighlight]}
         components={{
-          p: ({ children }) => (
-            <p className="my-3 first:mt-0 last:mb-0">
-              {Array.isArray(children)
-                ? children.map((c, i) =>
-                    typeof c === "string" ? <span key={i}>{renderMentions(c)}</span> : c,
-                  )
-                : typeof children === "string"
-                ? renderMentions(children)
-                : children}
-            </p>
-          ),
+          p: ({ children }) => {
+            const solo = standaloneURL(children);
+            if (solo && linksPolicy.previewsEnabled) {
+              // A bare URL on its own line gets the Onebox treatment —
+              // skeleton first, then cached preview, fallback anchor
+              // on failure. The <p> wrapper is dropped so the card is
+              // a block-level sibling of surrounding paragraphs.
+              return <LinkCard url={solo} />;
+            }
+            return (
+              <p className="my-3 first:mt-0 last:mb-0">
+                {Array.isArray(children)
+                  ? children.map((c, i) =>
+                      typeof c === "string" ? <span key={i}>{renderMentions(c)}</span> : c,
+                    )
+                  : typeof children === "string"
+                  ? renderMentions(children)
+                  : children}
+              </p>
+            );
+          },
           h1: ({ children }) => (
             <h1 className="mb-3 mt-6 border-b border-border pb-2 text-2xl font-bold first:mt-0">
               {children}
@@ -113,16 +168,34 @@ export function MarkdownRenderer({ content }: { content: string }) {
                 className="mr-1.5 h-3.5 w-3.5 translate-y-[1px] accent-primary"
               />
             ) : null,
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              className="text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-              target={href?.startsWith("http") ? "_blank" : undefined}
-              rel={href?.startsWith("http") ? "noopener noreferrer" : undefined}
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            const kind = classifyHref(href, linksPolicy);
+            const isExternal = kind !== "internal";
+            // Only route off-origin, non-trusted links through the
+            // interstitial. Same-origin and whitelisted hosts keep
+            // their direct href so back/forward and middle-click open
+            // the real destination.
+            const finalHref =
+              kind === "external-warn" && href ? buildInterstitialHref(href) : href;
+            return (
+              <a
+                href={finalHref}
+                className="text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                target={isExternal ? "_blank" : undefined}
+                rel={isExternal ? "noopener noreferrer nofollow" : undefined}
+              >
+                {children}
+                {isExternal && (
+                  <span
+                    aria-hidden="true"
+                    className="ml-0.5 text-[0.8em] text-muted-foreground"
+                  >
+                    ↗
+                  </span>
+                )}
+              </a>
+            );
+          },
           table: ({ children }) => (
             <div className="my-4 overflow-x-auto rounded-lg border border-border">
               <table className="w-full border-collapse text-sm [&_tr:nth-child(even)]:bg-muted/40">

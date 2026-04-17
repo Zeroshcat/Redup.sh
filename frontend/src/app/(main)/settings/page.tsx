@@ -4,7 +4,14 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Spinner } from "@/components/ui/Spinner";
 import { APIError } from "@/lib/api-client";
-import { changePassword, updateMe } from "@/lib/api/auth";
+import {
+  changePassword,
+  confirmEmailChange,
+  requestEmailChange,
+  sendVerificationEmail,
+  updateMe,
+  type ServerUser,
+} from "@/lib/api/auth";
 import { useAuthStore } from "@/store/auth";
 
 type Section = "profile" | "account" | "preferences" | "appearance";
@@ -325,9 +332,12 @@ function AccountSection() {
     <div>
       <SectionHeader title="账号安全" desc="邮箱与密码" />
 
-      <Field label="邮箱" hint="修改邮箱功能规划中">
+      <Field label="邮箱" hint="变更邮箱需先发送 6 位验证码到新地址">
         <Input type="email" value={user.email} disabled />
+        <EmailVerifyBadge user={user} />
       </Field>
+
+      <ChangeEmailCard current={user.email} />
 
       <div className="mb-6 rounded-lg border border-border bg-card p-4">
         <h3 className="mb-3 text-sm font-semibold text-foreground">修改密码</h3>
@@ -447,4 +457,228 @@ function AppearanceSection() {
       </div>
     </div>
   );
+}
+
+// EmailVerifyBadge shows the current email verification state inline
+// under the (read-only) email input, plus a one-click resend that
+// jumps to the verify-email page. Kept component-local since it only
+// makes sense here — moving it to /components would be premature.
+function EmailVerifyBadge({ user }: { user: ServerUser }) {
+  const [sending, setSending] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  const verified = !!user.email_verified_at;
+
+  async function resend() {
+    if (sending) return;
+    setSending(true);
+    setNote(null);
+    try {
+      await sendVerificationEmail(user.email);
+      setNote(`已发送验证码至 ${user.email}`);
+    } catch (err) {
+      if (err instanceof APIError && err.code === "resend_too_soon") {
+        setNote("请稍候再试,每 60 秒只能请求一次");
+      } else {
+        setNote("发送失败,请检查站点 SMTP 配置");
+      }
+    } finally {
+      setSending(false);
+    }
+  }
+
+  if (verified) {
+    return (
+      <p className="mt-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+        ✓ 邮箱已于 {new Date(user.email_verified_at!).toLocaleString()} 验证
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-amber-600 dark:text-amber-400">
+      <span>⚠ 邮箱尚未验证</span>
+      <button
+        type="button"
+        onClick={resend}
+        disabled={sending}
+        className="rounded-md border border-border bg-card px-2 py-0.5 text-foreground hover:bg-accent disabled:opacity-40"
+      >
+        {sending ? "发送中…" : "重新发送验证码"}
+      </button>
+      <Link
+        href={`/verify-email?email=${encodeURIComponent(user.email)}`}
+        className="text-foreground underline"
+      >
+        立即验证
+      </Link>
+      {note && <span className="text-muted-foreground">{note}</span>}
+    </div>
+  );
+}
+
+// ChangeEmailCard implements the two-step email-change flow: input a
+// new address → send a 6-digit code to it → user pastes the code → we
+// swap the email on the server and push the fresh user row back into
+// the auth store. Kept as a separate card to visually distinguish it
+// from the password form below.
+function ChangeEmailCard({ current }: { current: string }) {
+  const setUser = useAuthStore((s) => s.setUser);
+
+  const [newEmail, setNewEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [stage, setStage] = useState<"input" | "verify">("input");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail);
+
+  async function doRequest() {
+    setError(null);
+    setInfo(null);
+    if (!emailOk) {
+      setError("邮箱格式不正确");
+      return;
+    }
+    if (newEmail.trim().toLowerCase() === current.toLowerCase()) {
+      setError("新邮箱不能与当前邮箱相同");
+      return;
+    }
+    setBusy(true);
+    try {
+      await requestEmailChange(newEmail.trim());
+      setStage("verify");
+      setInfo(`已向 ${newEmail.trim()} 发送 6 位验证码`);
+    } catch (err) {
+      if (err instanceof APIError) {
+        setError(mapChangeEmailError(err));
+      } else {
+        setError("发送失败,请检查网络");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doConfirm() {
+    setError(null);
+    setInfo(null);
+    if (code.trim().length !== 6) {
+      setError("验证码必须是 6 位数字");
+      return;
+    }
+    setBusy(true);
+    try {
+      const updated = await confirmEmailChange(newEmail.trim(), code.trim());
+      setUser(updated);
+      setInfo("✓ 邮箱已更新");
+      setStage("input");
+      setNewEmail("");
+      setCode("");
+    } catch (err) {
+      if (err instanceof APIError) {
+        setError(mapChangeEmailError(err));
+      } else {
+        setError("验证失败,请检查网络");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mb-6 rounded-lg border border-border bg-card p-4">
+      <h3 className="mb-3 text-sm font-semibold text-foreground">变更邮箱</h3>
+
+      {stage === "input" ? (
+        <div className="space-y-3">
+          <input
+            type="email"
+            value={newEmail}
+            onChange={(e) => setNewEmail(e.target.value)}
+            placeholder="新邮箱地址"
+            autoComplete="off"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            发送后新邮箱会收到一封带 6 位验证码的邮件,输入后完成变更。
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="text-xs text-muted-foreground">
+            目标邮箱 <span className="font-medium text-foreground">{newEmail}</span>
+          </div>
+          <input
+            type="text"
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            placeholder="6 位验证码"
+            inputMode="numeric"
+            maxLength={6}
+            autoComplete="one-time-code"
+            className="w-full rounded-md border border-input bg-background px-3 py-3 text-center font-mono text-lg tracking-[0.4em] outline-none focus:border-ring"
+          />
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-3 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">
+          {error}
+        </div>
+      )}
+      {info && !error && (
+        <div className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-400">
+          {info}
+        </div>
+      )}
+
+      <div className="mt-4 flex justify-end gap-2">
+        {stage === "verify" && (
+          <button
+            type="button"
+            onClick={() => {
+              setStage("input");
+              setCode("");
+              setError(null);
+              setInfo(null);
+            }}
+            className="rounded-md border border-border bg-card px-4 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent"
+          >
+            上一步
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={stage === "input" ? doRequest : doConfirm}
+          disabled={busy || (stage === "input" ? !emailOk : code.length !== 6)}
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-1.5 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50"
+        >
+          {busy ? "处理中…" : stage === "input" ? "发送验证码" : "确认变更"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function mapChangeEmailError(err: APIError): string {
+  switch (err.code) {
+    case "email_taken":
+      return "该邮箱已被其他账号使用";
+    case "email_already_verified":
+      return "新邮箱不能与当前邮箱相同";
+    case "invalid_email":
+      return "邮箱格式不正确";
+    case "email_domain_blocked":
+      return "该邮箱域名不在允许列表中";
+    case "invalid_verification_code":
+      return "验证码错误或已过期";
+    case "resend_too_soon":
+      return "请稍候再试,每 60 秒只能请求一次";
+    case "mail_not_configured":
+      return "站点尚未配置邮件服务,请联系管理员";
+    default:
+      return err.message || "操作失败";
+  }
 }

@@ -15,10 +15,17 @@ type User struct {
 	Credits      int       `gorm:"default:0" json:"credits"`         // spendable wallet balance
 	XP           int       `gorm:"default:0" json:"xp"`              // lifetime experience points
 	Level        int16     `gorm:"default:1" json:"level"`
-	Role         string    `gorm:"size:32;default:'user'" json:"role"`
-	Status       string    `gorm:"size:16;default:'active'" json:"status"`
-	JoinedAt     time.Time `gorm:"autoCreateTime" json:"joined_at"`
-	UpdatedAt    time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	Role            string     `gorm:"size:32;default:'user'" json:"role"`
+	Status          string     `gorm:"size:16;default:'active'" json:"status"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
+	JoinedAt        time.Time  `gorm:"autoCreateTime" json:"joined_at"`
+	UpdatedAt       time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// EmailVerified reports whether the user has completed the email
+// verification step. A nil or zero timestamp means "never verified".
+func (u *User) EmailVerified() bool {
+	return u.EmailVerifiedAt != nil && !u.EmailVerifiedAt.IsZero()
 }
 
 func (User) TableName() string { return "users" }

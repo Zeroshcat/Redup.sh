@@ -56,6 +56,10 @@ func (h *Handler) Register(r *gin.RouterGroup, authMiddleware ...gin.HandlerFunc
 	}
 	entry.POST("/register", h.register)
 	entry.POST("/login", h.login)
+	entry.POST("/send-verification", h.sendVerification)
+	entry.POST("/verify-email", h.verifyEmail)
+	entry.POST("/forgot-password", h.forgotPassword)
+	entry.POST("/reset-password", h.resetPassword)
 	g.POST("/refresh", h.refresh)
 	g.POST("/logout", h.logout)
 
@@ -68,6 +72,8 @@ func (h *Handler) Register(r *gin.RouterGroup, authMiddleware ...gin.HandlerFunc
 	me.GET("/me", h.me)
 	me.PUT("/me", h.updateMe)
 	me.POST("/me/password", h.changePassword)
+	me.POST("/me/email/request", h.requestEmailChange)
+	me.POST("/me/email/confirm", h.confirmEmailChange)
 }
 
 // RegisterAdmin mounts admin user-moderation endpoints. Caller is expected to
@@ -267,10 +273,11 @@ type registerReq struct {
 }
 
 type authResp struct {
-	User         *User  `json:"user"`
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int    `json:"expires_in"`
+	User                *User  `json:"user"`
+	AccessToken         string `json:"access_token"`
+	RefreshToken        string `json:"refresh_token"`
+	ExpiresIn           int    `json:"expires_in"`
+	EmailVerifyRequired bool   `json:"email_verify_required,omitempty"`
 }
 
 func (h *Handler) register(c *gin.Context) {
@@ -305,6 +312,13 @@ func (h *Handler) login(c *gin.Context) {
 	}
 	u, err := h.svc.Login(LoginInput{Login: req.Login, Password: req.Password})
 	if err != nil {
+		if errors.Is(err, ErrEmailNotVerified) && u != nil {
+			// Attach the email so the UI can jump straight to the
+			// verify-code page without asking for it again.
+			httpx.FailWith(c, 403, httpx.CodeEmailNotVerified,
+				"email not verified", gin.H{"email": u.Email})
+			return
+		}
 		h.writeServiceError(c, err)
 		return
 	}
@@ -452,15 +466,204 @@ func (h *Handler) issueTokens(c *gin.Context, u *User, created bool) {
 		return
 	}
 	resp := authResp{
-		User:         u,
-		AccessToken:  access,
-		RefreshToken: refresh,
-		ExpiresIn:    h.jwt.AccessTTLSeconds(),
+		User:                u,
+		AccessToken:         access,
+		RefreshToken:        refresh,
+		ExpiresIn:           h.jwt.AccessTTLSeconds(),
+		EmailVerifyRequired: h.svc.VerifyRequiredAndMissing(u),
 	}
 	if created {
 		httpx.Created(c, resp)
 	} else {
 		httpx.OK(c, resp)
+	}
+}
+
+type sendVerifyReq struct {
+	Email string `json:"email" binding:"required"`
+}
+
+// sendVerification (re)sends the email verification code for a given
+// address. Deliberately opaque about whether the email is registered:
+// callers always see a generic success unless the mailer is
+// mis-configured or cooldown tripped. This prevents an address-enum
+// oracle via this endpoint.
+func (h *Handler) sendVerification(c *gin.Context) {
+	var req sendVerifyReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.BadRequest(c, "invalid request")
+		return
+	}
+	err := h.svc.SendVerificationEmail(c.Request.Context(), req.Email)
+	switch {
+	case err == nil:
+		httpx.OK(c, gin.H{"ok": true})
+	case errors.Is(err, ErrMailNotConfigured), errors.Is(err, ErrVerifyCodeStoreMissing):
+		httpx.Fail(c, 503, httpx.CodeMailNotConfigured, "mail service not configured")
+	case errors.Is(err, ErrResendTooSoon):
+		httpx.Fail(c, 429, httpx.CodeResendTooSoon, "please wait before requesting another code")
+	case errors.Is(err, ErrEmailAlreadyVerified):
+		httpx.Fail(c, 409, httpx.CodeEmailAlreadyVerified, "email already verified")
+	case errors.Is(err, ErrInvalidEmail):
+		httpx.ValidationError(c, httpx.CodeInvalidEmail, "invalid email format")
+	case errors.Is(err, ErrUserNotFound):
+		// Don't leak registration state — respond as if success.
+		httpx.OK(c, gin.H{"ok": true})
+	default:
+		httpx.Internal(c, err.Error())
+	}
+}
+
+type verifyEmailReq struct {
+	Email string `json:"email" binding:"required"`
+	Code  string `json:"code" binding:"required"`
+}
+
+// verifyEmail redeems a code and stamps email_verified_at. Returns the
+// updated user so the client can swap its cached copy. Crucially it
+// does NOT issue new tokens — the caller already has a session from
+// register/login (we don't block either on verification). A signed-in
+// session with verified email is the canonical post-verify state.
+func (h *Handler) verifyEmail(c *gin.Context) {
+	var req verifyEmailReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.BadRequest(c, "invalid request")
+		return
+	}
+	u, err := h.svc.VerifyEmailCode(req.Email, req.Code)
+	switch {
+	case err == nil:
+		httpx.OK(c, gin.H{"user": u, "verified": true})
+	case errors.Is(err, ErrInvalidCode):
+		httpx.ValidationError(c, httpx.CodeInvalidVerifyCode, "invalid or expired verification code")
+	case errors.Is(err, ErrVerifyCodeStoreMissing):
+		httpx.Fail(c, 503, httpx.CodeMailNotConfigured, "verification store not configured")
+	default:
+		httpx.Internal(c, err.Error())
+	}
+}
+
+type emailChangeReq struct {
+	NewEmail string `json:"new_email" binding:"required"`
+}
+
+func (h *Handler) requestEmailChange(c *gin.Context) {
+	uid, ok := auth.CurrentUserID(c)
+	if !ok {
+		httpx.Unauthorized(c, "unauthorized")
+		return
+	}
+	var req emailChangeReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.BadRequest(c, "invalid request")
+		return
+	}
+	err := h.svc.RequestEmailChange(c.Request.Context(), uid, req.NewEmail)
+	switch {
+	case err == nil:
+		httpx.OK(c, gin.H{"ok": true})
+	case errors.Is(err, ErrMailNotConfigured), errors.Is(err, ErrVerifyCodeStoreMissing):
+		httpx.Fail(c, 503, httpx.CodeMailNotConfigured, "mail service not configured")
+	case errors.Is(err, ErrResendTooSoon):
+		httpx.Fail(c, 429, httpx.CodeResendTooSoon, "please wait before requesting another code")
+	case errors.Is(err, ErrEmailAlreadyVerified):
+		httpx.Conflict(c, httpx.CodeEmailAlreadyVerified, "new email matches the current one")
+	case errors.Is(err, ErrEmailTaken):
+		httpx.Conflict(c, httpx.CodeEmailTaken, "email already taken")
+	case errors.Is(err, ErrInvalidEmail):
+		httpx.ValidationError(c, httpx.CodeInvalidEmail, "invalid email format")
+	case errors.Is(err, ErrEmailDomainBlocked):
+		httpx.ValidationError(c, "email_domain_blocked", "this email domain is not allowed")
+	default:
+		httpx.Internal(c, err.Error())
+	}
+}
+
+type emailConfirmReq struct {
+	NewEmail string `json:"new_email" binding:"required"`
+	Code     string `json:"code" binding:"required"`
+}
+
+func (h *Handler) confirmEmailChange(c *gin.Context) {
+	uid, ok := auth.CurrentUserID(c)
+	if !ok {
+		httpx.Unauthorized(c, "unauthorized")
+		return
+	}
+	var req emailConfirmReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.BadRequest(c, "invalid request")
+		return
+	}
+	u, err := h.svc.ConfirmEmailChange(uid, req.NewEmail, req.Code)
+	switch {
+	case err == nil:
+		httpx.OK(c, u)
+	case errors.Is(err, ErrInvalidCode):
+		httpx.ValidationError(c, httpx.CodeInvalidVerifyCode, "invalid or expired verification code")
+	case errors.Is(err, ErrEmailTaken):
+		httpx.Conflict(c, httpx.CodeEmailTaken, "email already taken")
+	case errors.Is(err, ErrVerifyCodeStoreMissing):
+		httpx.Fail(c, 503, httpx.CodeMailNotConfigured, "verification store not configured")
+	default:
+		httpx.Internal(c, err.Error())
+	}
+}
+
+type forgotPasswordReq struct {
+	Email string `json:"email" binding:"required"`
+}
+
+// forgotPassword fires a reset-password email when the address exists.
+// Always returns 200 for unknown addresses to avoid leaking
+// registration state. Real failures (SMTP down, cooldown) also
+// collapse to 200 for the same reason — the UI shows the same
+// "if the address exists, we've sent a mail" message either way.
+func (h *Handler) forgotPassword(c *gin.Context) {
+	var req forgotPasswordReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.BadRequest(c, "invalid request")
+		return
+	}
+	err := h.svc.RequestPasswordReset(c.Request.Context(), req.Email)
+	switch {
+	case err == nil, errors.Is(err, ErrUserNotFound), errors.Is(err, ErrResetCooldown):
+		httpx.OK(c, gin.H{"ok": true})
+	case errors.Is(err, ErrMailNotConfigured), errors.Is(err, ErrResetStoreMissing):
+		httpx.Fail(c, 503, httpx.CodeMailNotConfigured, "mail service not configured")
+	case errors.Is(err, ErrInvalidEmail):
+		httpx.ValidationError(c, httpx.CodeInvalidEmail, "invalid email format")
+	default:
+		httpx.Internal(c, err.Error())
+	}
+}
+
+type resetPasswordReq struct {
+	Token       string `json:"token" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required"`
+}
+
+// resetPassword redeems a reset token and writes the new bcrypt hash.
+// Invalid / expired / already-used tokens collapse to the same
+// reset_token_invalid code so an attacker can't probe token state.
+func (h *Handler) resetPassword(c *gin.Context) {
+	var req resetPasswordReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.BadRequest(c, "invalid request")
+		return
+	}
+	err := h.svc.ResetPassword(req.Token, req.NewPassword)
+	switch {
+	case err == nil:
+		httpx.NoContent(c)
+	case errors.Is(err, ErrResetTokenInvalid):
+		httpx.ValidationError(c, httpx.CodeResetTokenInvalid, "reset token is invalid or expired")
+	case errors.Is(err, ErrWeakPassword):
+		httpx.ValidationError(c, httpx.CodeWeakPassword, "new password must be at least 8 characters")
+	case errors.Is(err, ErrResetStoreMissing):
+		httpx.Fail(c, 503, httpx.CodeMailNotConfigured, "reset store not configured")
+	default:
+		httpx.Internal(c, err.Error())
 	}
 }
 

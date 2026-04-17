@@ -18,6 +18,7 @@ type Config struct {
 	JWTAccessTTLMin  int
 	JWTRefreshTTLDay int
 	CORSAllowOrigin  string
+	FrontendURL      string
 	AnonIDPrefix     string
 	SnowflakeNodeID  int
 
@@ -27,6 +28,13 @@ type Config struct {
 
 	SentryDSN         string
 	SentryEnvironment string
+
+	// LinkPreviewAllowCIDRs is a comma-separated list of extra CIDR
+	// ranges the link-preview SSRF guard should treat as "ok to
+	// dial". Intended for dev setups behind transparent proxies
+	// (e.g. Clash/Surge TUN mode, which returns fake IPs in
+	// 198.18.0.0/15). Leave empty in production.
+	LinkPreviewAllowCIDRs string
 }
 
 func Load() *Config {
@@ -45,6 +53,7 @@ func Load() *Config {
 		JWTAccessTTLMin:  envInt("JWT_ACCESS_TTL_MIN", 15),
 		JWTRefreshTTLDay: envInt("JWT_REFRESH_TTL_DAYS", 7),
 		CORSAllowOrigin:  envStr("CORS_ALLOW_ORIGIN", "http://localhost:3000"),
+		FrontendURL:      envStr("FRONTEND_URL", envStr("CORS_ALLOW_ORIGIN", "http://localhost:3000")),
 		AnonIDPrefix:     envStr("ANON_ID_PREFIX", "Anon"),
 		SnowflakeNodeID:  envInt("SNOWFLAKE_NODE_ID", 1),
 
@@ -60,6 +69,8 @@ func Load() *Config {
 
 		SentryDSN:         envStr("SENTRY_DSN", ""),
 		SentryEnvironment: envStr("SENTRY_ENVIRONMENT", "development"),
+
+		LinkPreviewAllowCIDRs: envStr("LINKPREVIEW_ALLOW_CIDRS", ""),
 	}
 }
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"log"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -18,7 +19,9 @@ import (
 	"github.com/redup/backend/internal/forum"
 	"github.com/redup/backend/internal/invite"
 	httpx "github.com/redup/backend/internal/http"
+	"github.com/redup/backend/internal/linkpreview"
 	"github.com/redup/backend/internal/llm"
+	"github.com/redup/backend/internal/mailer"
 	"github.com/redup/backend/internal/messaging"
 	"github.com/redup/backend/internal/moderation"
 	"github.com/redup/backend/internal/notification"
@@ -56,6 +59,8 @@ type services struct {
 	creditsSvc     *credits.Service
 	llmRouter      *llm.Router
 	llmSvc         *llm.Service
+	mailerSvc      *mailer.Service
+	linkPreviewSvc *linkpreview.Service
 	translationSvc *translation.Service
 	cfSvc          *contentfilter.Service
 	moderationSvc  *moderation.Service
@@ -76,6 +81,8 @@ type services struct {
 	siteHandler         *site.Handler
 	creditsHandler      *credits.Handler
 	llmHandler          *llm.Handler
+	mailerHandler       *mailer.Handler
+	linkPreviewHandler  *linkpreview.Handler
 	translationHandler  *translation.Handler
 	cfHandler           *contentfilter.Handler
 	moderationHandler   *moderation.Handler
@@ -154,12 +161,57 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 	})
 	s.siteHandler = site.NewHandler(s.siteSvc)
 
+	// --- mailer (hot-reloaded from site.smtp) ---
+	s.mailerSvc = mailer.New()
+	if smtp, err := s.siteSvc.GetSMTP(); err == nil {
+		s.mailerSvc.SetConfig(toMailerConfig(smtp))
+		if smtp.Enabled {
+			log.Printf("mailer enabled: host=%s port=%d encryption=%s from=%s",
+				smtp.Host, smtp.Port, smtp.Encryption, smtp.FromAddress)
+		}
+	}
+	s.siteSvc.OnSMTPChange(func(v site.SMTP) {
+		s.mailerSvc.SetConfig(toMailerConfig(v))
+		if v.Enabled {
+			log.Printf("mailer updated at runtime: host=%s port=%d encryption=%s", v.Host, v.Port, v.Encryption)
+		} else {
+			log.Printf("mailer disabled at runtime")
+		}
+	})
+	s.mailerHandler = mailer.NewHandler(s.mailerSvc)
+
+	// --- link-preview (OG fetcher + Redis cache) ---
+	if cfg.LinkPreviewAllowCIDRs != "" {
+		linkpreview.SetAllowedNets(strings.Split(cfg.LinkPreviewAllowCIDRs, ","))
+		log.Printf("link-preview ssrf allow-list: %s", cfg.LinkPreviewAllowCIDRs)
+	}
+	s.linkPreviewSvc = linkpreview.New(rdb, &linkPreviewPolicyAdapter{siteSvc: s.siteSvc})
+	s.linkPreviewHandler = linkpreview.NewHandler(s.linkPreviewSvc)
+
 	// Wire registration policy enforcement into the user service. The
 	// adapter reads the live registration config from site_settings; the
 	// invite validator lets the user service check + consume codes without
 	// importing the invite package directly.
 	s.userSvc.SetRegistrationConfig(&registrationConfigAdapter{siteSvc: s.siteSvc})
 	s.userSvc.SetInviteValidator(s.inviteSvc)
+
+	// Wire outbound mail + verification-code store so registration can
+	// send codes and the verify-email endpoint can redeem them. 15-min
+	// code TTL, 60s resend cooldown. Password-reset tokens share the
+	// same Redis but with a longer 1-hour TTL since the user has to
+	// check their inbox and click through.
+	s.userSvc.SetMailSender(&userMailSenderAdapter{mailer: s.mailerSvc})
+	s.userSvc.SetVerifyCodeStore(redisx.NewMailVerifyStore(rdb, 15*time.Minute, 60))
+	s.userSvc.SetPasswordResetStore(redisx.NewPasswordResetStore(rdb, time.Hour, 60))
+	frontendURL := cfg.FrontendURL
+	s.userSvc.SetResetLinkBase(func() string { return frontendURL })
+	s.userSvc.SetSiteNameFn(func() string {
+		basic, err := s.siteSvc.GetBasic()
+		if err != nil {
+			return ""
+		}
+		return basic.Name
+	})
 
 	// --- credits / wallet ---
 	creditsRepo := credits.NewRepository(database)
@@ -329,6 +381,7 @@ func buildServices(cfg *config.Config, database *gorm.DB, rdb *redis.Client) (*s
 	s.botHandler.SetAudit(s.auditSvc)
 	s.cfHandler.SetAudit(s.auditSvc)
 	s.announcementHandler.SetAudit(s.auditSvc)
+	s.mailerHandler.SetAudit(s.auditSvc)
 
 	return s, nil
 }

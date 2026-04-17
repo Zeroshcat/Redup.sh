@@ -28,6 +28,8 @@ const (
 	KeyCredits      = "site.credits"
 	KeyModeration   = "site.moderation"
 	KeyLLM          = "site.llm"
+	KeySMTP         = "site.smtp"
+	KeyLinks        = "site.links"
 )
 
 // Typed structs for each group. These define the canonical shape persisted
@@ -173,6 +175,42 @@ const (
 	LLMKindOpenAI    = "openai"
 	LLMKindAnthropic = "anthropic"
 )
+
+// Links controls how outbound links in user-generated content are
+// rendered. Stage A of the feature only consumes this field in the
+// admin UI; the frontend markdown renderer currently decorates every
+// off-origin http(s) link regardless. When Stage B ships, the
+// renderer (or a gateway /redirect route) will consult TrustedDomains
+// to decide whether to bypass the interstitial for known-safe hosts.
+type Links struct {
+	ExternalWarnEnabled bool     `json:"external_warn_enabled"`
+	TrustedDomains      []string `json:"trusted_domains,omitempty"`
+
+	// PreviewEnabled gates the server-side OG fetcher. When false,
+	// /api/link-preview always returns 503 regardless of URL.
+	PreviewEnabled bool `json:"preview_enabled"`
+
+	// DenylistDomains is a lower-case list of hosts whose previews
+	// should never be fetched. Matches the host verbatim or any
+	// subdomain (example.com matches blog.example.com).
+	DenylistDomains []string `json:"denylist_domains,omitempty"`
+}
+
+// SMTP holds outbound mail delivery credentials. Password is persisted
+// in plaintext in site_settings but stripped to a fixed-width mask by
+// MaskedSnapshot before it ever leaves the server — mirror of how LLM
+// api keys are handled. On admin save, an empty or mask-value password
+// means "keep the stored credential".
+type SMTP struct {
+	Enabled     bool   `json:"enabled"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	Username    string `json:"username,omitempty"`
+	Password    string `json:"password,omitempty"`
+	Encryption  string `json:"encryption"` // "none" | "starttls" | "tls"
+	FromAddress string `json:"from_address"`
+	FromName    string `json:"from_name,omitempty"`
+}
 
 // Moderation is the LLM-based content audit config. Reads site.rules at call
 // time as the rule baseline, then asks the model to judge new posts against

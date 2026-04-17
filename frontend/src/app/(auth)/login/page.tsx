@@ -27,9 +27,18 @@ export default function LoginPage() {
     try {
       const session = await login({ login: account.trim(), password });
       setUser(session.user);
-      router.push("/");
+      if (session.email_verify_required) {
+        router.push(`/verify-email?email=${encodeURIComponent(session.user.email)}`);
+      } else {
+        router.push("/");
+      }
     } catch (err) {
       if (err instanceof APIError) {
+        if (err.code === "email_not_verified") {
+          const email = extractEmail(err.data) || account.trim();
+          router.push(`/verify-email?email=${encodeURIComponent(email)}&from=login`);
+          return;
+        }
         setError(formatError(err));
       } else {
         setError("无法连接到服务器");
@@ -37,6 +46,14 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function extractEmail(data: unknown): string | null {
+    if (typeof data === "object" && data !== null && "email" in data) {
+      const v = (data as { email: unknown }).email;
+      return typeof v === "string" ? v : null;
+    }
+    return null;
   }
 
   function formatError(err: APIError): string {
@@ -145,6 +162,8 @@ function errorMessage(err: APIError): string {
       return "用户名或密码错误";
     case "account_disabled":
       return "账号已被禁用，请联系管理员";
+    case "email_not_verified":
+      return "邮箱尚未验证，请前往验证页面";
     case "bad_request":
       return "请求格式错误";
     default:

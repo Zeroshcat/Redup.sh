@@ -1,9 +1,12 @@
 package user
 
 import (
+	"context"
 	"errors"
+	"log"
 	"regexp"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -21,6 +24,7 @@ var (
 	ErrInviteRequired     = errors.New("invite code required")
 	ErrInvalidInviteCode  = errors.New("invalid invite code")
 	ErrEmailDomainBlocked = errors.New("email domain not allowed")
+	ErrEmailNotVerified   = errors.New("email not verified")
 )
 
 // RegistrationConfig is the narrow read-only interface user.Service needs
@@ -30,6 +34,7 @@ type RegistrationConfig interface {
 	InviteRequired() bool
 	EmailDomainRestricted() bool
 	AllowedEmailDomains() []string
+	EmailVerifyRequired() bool
 }
 
 // InviteValidator lets the user service check + consume invite codes
@@ -51,11 +56,16 @@ type CreditsAwarder interface {
 }
 
 type Service struct {
-	repo       *Repository
-	credits    CreditsAwarder
-	loginGuard LoginGuard
-	regConfig  RegistrationConfig
-	invite     InviteValidator
+	repo        *Repository
+	credits     CreditsAwarder
+	loginGuard  LoginGuard
+	regConfig   RegistrationConfig
+	invite      InviteValidator
+	mailer      MailSender
+	verifyCodes VerifyCodeStore
+	resetStore  PasswordResetStore
+	resetLinkFn func() string
+	siteNameFn  func() string
 }
 
 func NewService(repo *Repository) *Service {
@@ -162,6 +172,18 @@ func (s *Service) Register(in RegisterInput) (*User, error) {
 	if s.credits != nil {
 		s.credits.Award(u.ID, "signup_bonus", "user", u.ID, "新用户注册礼包")
 	}
+
+	// Best-effort: send a verification mail when the site requires it and
+	// mailer + code store are both wired. A failure here doesn't abort
+	// registration — the user can resend later from the verify page.
+	if s.regConfig != nil && s.regConfig.EmailVerifyRequired() && s.mailer != nil && s.verifyCodes != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := s.SendVerificationEmail(ctx, u.Email); err != nil {
+			log.Printf("[register] send verification mail failed for %s: %v", u.Email, err)
+		}
+	}
+
 	return u, nil
 }
 
@@ -248,6 +270,13 @@ func (s *Service) Login(in LoginInput) (*User, error) {
 	}
 	if s.loginGuard != nil {
 		s.loginGuard.Reset(login)
+	}
+	// Email-verify gate: block login for unverified users only when the
+	// site policy requires verification. Authoritative source is the
+	// registration config passed in by main; we fall through silently
+	// when it's absent (tests, early bootstrap).
+	if s.VerifyRequiredAndMissing(u) {
+		return u, ErrEmailNotVerified
 	}
 	return u, nil
 }
