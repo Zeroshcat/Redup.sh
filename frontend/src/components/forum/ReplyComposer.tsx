@@ -18,7 +18,6 @@ export function ReplyComposer({
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const [content, setContent] = useState("");
-  const [anon, setAnon] = useState(isAnonCategory);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestion, setSuggestion] = useState<string | null>(null);
@@ -139,17 +138,11 @@ export function ReplyComposer({
         </div>
       )}
       <div className="flex items-center justify-between">
-        <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={anon}
-            onChange={(e) => setAnon(e.target.checked)}
-            disabled={isAnonCategory}
-            className="h-3.5 w-3.5"
-          />
-          匿名发言
-          {isAnonCategory && <span className="text-zinc-400">（当前板块强制匿名）</span>}
-        </label>
+        {isAnonCategory ? (
+          <span className="text-xs text-muted-foreground">🎭 匿名发言（当前板块强制匿名）</span>
+        ) : (
+          <span />
+        )}
         <button
           type="button"
           onClick={onSubmit}
